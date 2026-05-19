@@ -25,7 +25,20 @@
  * D18 edge-case checklist: docs/artifacts/phase-6-edge-case-checklist.md
  */
 
-import { calculateTokenCost } from './token-pricing'
+import { getModelPricing } from './model-pricing-table'
+
+// Client-safe cost derivation. Imports from `./model-pricing-table`
+// (pure data, no Node imports) instead of `./token-pricing` (transitively
+// pulls `provider-subscriptions` which uses node:fs / node:child_process
+// and breaks client bundling under Next.js 16 Turbopack).
+//
+// Subscription-based zero-cost handling (Claude Pro / Max plans) lives
+// server-side at persistence time; client-side cost is the raw
+// pricing-table product.
+function deriveClientSafeCost(model: string, inputTokens: number, outputTokens: number): number {
+  const pricing = getModelPricing(model)
+  return ((inputTokens * pricing.inputPerMTok) + (outputTokens * pricing.outputPerMTok)) / 1_000_000
+}
 
 export interface McTokenUsageEvent {
   type: 'token_usage'
@@ -143,7 +156,7 @@ export function adaptGatewayUsage(
   }
 
   if (cost === undefined) {
-    cost = calculateTokenCost(model, inputTokens, outputTokens)
+    cost = deriveClientSafeCost(model, inputTokens, outputTokens)
   }
 
   const agentName = toStr(raw.agent) || toStr(raw.agentName) || undefined
