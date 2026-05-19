@@ -1,9 +1,41 @@
 import crypto from 'node:crypto'
 import os from 'node:os'
-import { NextResponse } from 'next/server'
-import type { NextRequest } from 'next/server'
+import { NextResponse, NextRequest } from 'next/server'
+import type { NextFetchEvent } from 'next/server'
+import { clerkMiddleware, createRouteMatcher } from '@clerk/nextjs/server'
 import { buildMissionControlCsp, buildNonceRequestHeaders } from '@/lib/csp'
 import { MC_SESSION_COOKIE_NAME, LEGACY_MC_SESSION_COOKIE_NAME } from '@/lib/session-cookie'
+
+// Phase 3 BUILD D2-D6 — Clerk SSO edge integration.
+// When CLERK_SECRET_KEY is set, the proxy first runs Clerk JWT
+// verification, then injects trusted headers (x-clerk-user-email +
+// x-clerk-org-slug) consumed downstream by getUserFromRequest. Pre-
+// cutover tenants run with CLERK_SECRET_KEY unset and skip the Clerk
+// path entirely. Defense in depth: when Clerk is disabled we still
+// strip those headers in case a request smuggled them.
+function isClerkEnabled(): boolean {
+  return Boolean((process.env.CLERK_SECRET_KEY || '').trim())
+}
+
+const CLERK_HEADER_NAMES = [
+  'x-clerk-user-email',
+  'x-clerk-org-slug',
+  'x-clerk-user-id',
+] as const
+
+const isClerkPublicRoute = createRouteMatcher([
+  '/sign-in(.*)',
+  '/sign-up(.*)',
+  '/api/auth/clerk/webhook',
+  '/login',
+  '/setup',
+  '/api/setup',
+  '/api/auth/login',
+  '/api/auth/logout',
+  '/api/auth/google(.*)',
+  '/api/docs',
+  '/docs',
+])
 
 /** Constant-time string comparison using Node.js crypto. */
 function safeCompare(a: string, b: string): boolean {
@@ -155,6 +187,24 @@ function extractApiKeyFromRequest(request: NextRequest): string {
   return ''
 }
 
+function stripClerkHeadersFromRequest(request: NextRequest): NextRequest {
+  // Defense in depth: when Clerk is disabled, strip any Clerk headers
+  // a client may have smuggled in. With Clerk enabled, the wrapper
+  // overwrites these headers from verified JWT claims (the writer wins
+  // — clients can't poison the trusted-header path).
+  let hasAnyClerkHeader = false
+  for (const name of CLERK_HEADER_NAMES) {
+    if (request.headers.has(name)) {
+      hasAnyClerkHeader = true
+      break
+    }
+  }
+  if (!hasAnyClerkHeader) return request
+  const sanitized = new Headers(request.headers)
+  for (const name of CLERK_HEADER_NAMES) sanitized.delete(name)
+  return new NextRequest(request, { headers: sanitized })
+}
+
 export function proxy(request: NextRequest) {
   // Network access control.
   // In production: default-deny unless explicitly allowed.
@@ -231,6 +281,54 @@ export function proxy(request: NextRequest) {
   const loginUrl = request.nextUrl.clone()
   loginUrl.pathname = '/login'
   return addSecurityHeaders(NextResponse.redirect(loginUrl), request)
+}
+
+// Phase 3 BUILD D2-D6 — Clerk-aware default export.
+// Next.js 16 invokes the default export from proxy.ts; we delegate to
+// the existing `proxy` function unless Clerk is enabled, in which case
+// we first run clerkMiddleware → verify JWT → org gate → inject trusted
+// headers, then call `proxy` with the augmented request.
+const clerkWrappedProxy = clerkMiddleware(async (auth, request: NextRequest) => {
+  if (isClerkPublicRoute(request)) {
+    return proxy(request)
+  }
+  const session = await auth()
+  if (!session.userId) {
+    if (request.nextUrl.pathname.startsWith('/api/')) {
+      return new NextResponse('Unauthorized', { status: 401 })
+    }
+    return session.redirectToSignIn({ returnBackUrl: request.url })
+  }
+  const claims = session.sessionClaims as
+    | { email?: string; o?: { id?: string; slg?: string } }
+    | null
+    | undefined
+  const orgSlug =
+    claims?.o?.slg || (session as { orgSlug?: string }).orgSlug || ''
+  const email = claims?.email || ''
+
+  const expectedOrg = (process.env.MC_CLERK_ORG_SLUG || '').trim()
+  if (expectedOrg && orgSlug !== expectedOrg) {
+    if (request.nextUrl.pathname.startsWith('/api/')) {
+      return new NextResponse('Forbidden — org mismatch', { status: 403 })
+    }
+    return session.redirectToSignIn({ returnBackUrl: request.url })
+  }
+
+  // Build a new NextRequest carrying the trusted Clerk headers.
+  const headers = new Headers(request.headers)
+  headers.set('x-clerk-user-email', email || session.userId)
+  headers.set('x-clerk-org-slug', orgSlug)
+  headers.set('x-clerk-user-id', session.userId)
+  const requestWithClerk = new NextRequest(request, { headers })
+  return proxy(requestWithClerk)
+})
+
+export default function proxyEntry(request: NextRequest, event: NextFetchEvent) {
+  if (!isClerkEnabled()) {
+    return proxy(stripClerkHeadersFromRequest(request))
+  }
+  return clerkWrappedProxy(request, event)
 }
 
 export const config = {
