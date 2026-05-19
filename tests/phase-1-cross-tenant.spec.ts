@@ -1,22 +1,35 @@
 /**
- * MC Phase 1 — Cross-tenant 403 E2E (T7)
+ * MC Phase 1 — Cross-tenant 403 E2E (T7) — EXTENDED for Clerk cutover.
  *
- * Source: T7 (eng-review JSONL) + D10 — silent failure mode if CF Access misconfigured.
+ * Source: T7 (eng-review JSONL) + D10 — silent failure mode if isolation
+ * misconfigured.
  *
- * Verifies per-tenant MC isolation:
- *   1. Authenticated user for tenant A CANNOT reach mc-B.holalumina.com (CF Access denies)
- *   2. Authenticated user for tenant A CAN reach mc-A.holalumina.com
- *   3. Unauthenticated request to any mc-* hostname is challenged by CF Access
+ * History:
+ *   - Phase 1 original: CF Access service-token auth per tenant.
+ *   - Phase 3 cutover (Session 4, 2026-05-19): CF Access apps DELETED
+ *     (241810bb, e2cc1284, e75517c4). Clerk org-slug middleware gate is
+ *     now the sole tenant-isolation primitive at the edge.
  *
- * Phase 1 exit gate. Failure = HARD STOP on deploy.
+ * This file preserves the original CF Access block (auto-skipped now that
+ * CF tokens are not provisioned — the env vars will be undefined and the
+ * `authHeaders` throws → test fails fast). The NEW describe block below
+ * exercises the Clerk-era D10 path against the same 3 MCs.
  *
- * Pre-reqs:
- *   - 3 MC containers deployed + /api/status returns 200
- *   - 3 CF Access apps configured with per-tenant email allowlists
- *   - Per-tenant CF Access service tokens issued + env vars set
+ * Verifies per-tenant MC isolation (Clerk era):
+ *   1. Unauthenticated request to any mc-* → 307 to accounts.holalumina.com/sign-in
+ *   2. Authenticated for tenant A CAN reach mc-A
+ *   3. Authenticated for tenant A CANNOT reach mc-B (Clerk org-claim mismatch → 403)
+ *
+ * Phase 1 exit gate D10. Failure = HARD STOP.
  */
 
 import { test, expect, request } from '@playwright/test';
+
+import {
+  PROD_FIXTURE_EMAIL,
+  TENANT_SUBDOMAINS,
+  mintClerkProdJwt,
+} from './helpers/clerk-prod-auth';
 
 const TENANTS = [
   {
@@ -52,7 +65,10 @@ function authHeaders(tenant: typeof TENANTS[number]): Record<string, string> {
   };
 }
 
-test.describe('Phase 1 cross-tenant isolation (T7)', () => {
+// CF Access path AUTO-SKIPPED post-cutover (apps deleted 2026-05-19).
+// Tests in this block throw on undefined CF tokens; the new Clerk-era
+// describe block below carries D10 forward.
+test.describe.skip('Phase 1 cross-tenant isolation — CF Access (RETIRED post-cutover)', () => {
   test('unauthenticated request to mc-ceremonia is challenged', async () => {
     const ctx = await request.newContext({ extraHTTPHeaders: {} });
     const res = await ctx.get(`${TENANTS[0].url}/api/status`, { failOnStatusCode: false });
@@ -101,8 +117,57 @@ test.describe('Phase 1 cross-tenant isolation (T7)', () => {
 });
 
 /**
- * Exit gate semantics:
+ * Exit gate semantics (CF Access — RETIRED):
  *   - 1 unauth + 3 own-reach + 6 cross-tenant-deny + 3 whoami = 13 tests
- *   - Skipped /api/whoami acceptable (not yet implemented in MC fork)
- *   - Any cross-tenant FAIL = STOP DEPLOY, rollback per docs/runbooks/mc-rollback-rehearsal.md
+ *   - All auto-skipped post-cutover; semantics preserved by Clerk block below.
  */
+
+// ---------------------------------------------------------------------------
+// Clerk-era D10 — exit gate replacement
+// ---------------------------------------------------------------------------
+
+const CLERK_TENANTS: Array<{
+  slug: 'ceremonia' | 'ericedmeades' | 'holalumina'
+  host: string
+}> = [
+  { slug: 'ceremonia', host: TENANT_SUBDOMAINS.ceremonia },
+  { slug: 'ericedmeades', host: TENANT_SUBDOMAINS.ericedmeades },
+  { slug: 'holalumina', host: TENANT_SUBDOMAINS.holalumina },
+]
+
+test.describe('Phase 1 D10 cross-tenant isolation (Clerk era)', () => {
+  test.skip(!process.env.CLERK_SECRET_KEY, 'CLERK_SECRET_KEY required for prod Clerk JWT')
+
+  test('unauth → 307 to accounts.holalumina.com/sign-in (every MC)', async ({ request: req }) => {
+    for (const t of CLERK_TENANTS) {
+      const res = await req.get(`https://${t.host}/`, { maxRedirects: 0 })
+      expect([302, 307]).toContain(res.status())
+      const loc = res.headers()['location'] ?? ''
+      expect(loc).toMatch(/^https:\/\/accounts\.holalumina\.com\/sign-in/)
+    }
+  })
+
+  for (const own of CLERK_TENANTS) {
+    test(`tenant ${own.slug} CAN reach own MC /api/auth/me with valid Bearer`, async ({ request: req }) => {
+      const { jwt } = await mintClerkProdJwt({ orgSlug: own.slug, email: PROD_FIXTURE_EMAIL })
+      const res = await req.get(`https://${own.host}/api/auth/me`, {
+        headers: { Authorization: `Bearer ${jwt}`, Cookie: `__session=${jwt}` },
+      })
+      expect(res.status()).toBe(200)
+    })
+
+    for (const other of CLERK_TENANTS) {
+      if (other.slug === own.slug) continue
+      test(`tenant ${own.slug} CANNOT reach mc-${other.slug.slice(0, 4)} (Clerk org-claim mismatch → 403)`, async ({ request: req }) => {
+        const { jwt } = await mintClerkProdJwt({ orgSlug: own.slug, email: PROD_FIXTURE_EMAIL })
+        const res = await req.get(`https://${other.host}/api/auth/me`, {
+          headers: { Authorization: `Bearer ${jwt}`, Cookie: `__session=${jwt}` },
+        })
+        expect(res.status(), `${own.slug} → ${other.slug} must be 403`).toBe(403)
+        // Defensive content leak check
+        const body = await res.text()
+        expect(body).not.toMatch(/agents|tasks|sessions/i)
+      })
+    }
+  }
+})
