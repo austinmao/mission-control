@@ -205,7 +205,12 @@ function stripClerkHeadersFromRequest(request: NextRequest): NextRequest {
   return new NextRequest(request, { headers: sanitized })
 }
 
-export function proxy(request: NextRequest) {
+// Internal proxy logic. The Next.js 16 entrypoint is the `proxy` named
+// export further down which wraps this with clerkMiddleware when Clerk
+// is enabled. This function is exported as `runProxyLogic` so unit
+// tests can call the unwrapped logic directly without setting up
+// `@clerk/nextjs` mocks.
+export function runProxyLogic(request: NextRequest) {
   // Network access control.
   // In production: default-deny unless explicitly allowed.
   // In dev/test: allow all hosts unless overridden.
@@ -290,7 +295,7 @@ export function proxy(request: NextRequest) {
 // headers, then call `proxy` with the augmented request.
 const clerkWrappedProxy = clerkMiddleware(async (auth, request: NextRequest) => {
   if (isClerkPublicRoute(request)) {
-    return proxy(request)
+    return runProxyLogic(request)
   }
   const session = await auth()
   if (!session.userId) {
@@ -321,15 +326,22 @@ const clerkWrappedProxy = clerkMiddleware(async (auth, request: NextRequest) => 
   headers.set('x-clerk-org-slug', orgSlug)
   headers.set('x-clerk-user-id', session.userId)
   const requestWithClerk = new NextRequest(request, { headers })
-  return proxy(requestWithClerk)
+  return runProxyLogic(requestWithClerk)
 })
 
-export default function proxyEntry(request: NextRequest, event: NextFetchEvent) {
+// Named export `proxy` is the Next.js 16 proxy.ts entrypoint by
+// convention. Wraps with clerkMiddleware when Clerk is enabled, falls
+// through to unwrapped runProxyLogic when CLERK_SECRET_KEY is unset.
+export function proxy(request: NextRequest, event?: NextFetchEvent) {
   if (!isClerkEnabled()) {
-    return proxy(stripClerkHeadersFromRequest(request))
+    return runProxyLogic(stripClerkHeadersFromRequest(request))
   }
-  return clerkWrappedProxy(request, event)
+  return clerkWrappedProxy(request, event as NextFetchEvent)
 }
+
+// Keep default export as alias for completeness — Next.js 16 prefers
+// the named `proxy` export but the default is also valid.
+export default proxy
 
 export const config = {
   matcher: ['/((?!_next/static|_next/image|favicon.ico|brand/).*)']
