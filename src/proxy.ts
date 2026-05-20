@@ -35,6 +35,10 @@ const isClerkPublicRoute = createRouteMatcher([
   '/api/auth/google(.*)',
   '/api/docs',
   '/docs',
+  // Container health probe — runProxyLogic still gates on action=health
+  // query param (see line ~252); anything else falls through to the
+  // /api/* session-or-API-key check. Required for Docker healthcheck.js.
+  '/api/status',
 ])
 
 /** Constant-time string comparison using Node.js crypto. */
@@ -65,6 +69,29 @@ function parseForwardedHost(forwarded: string | null): string[] {
     if (match?.[1]) hosts.push(match[1])
   }
   return hosts
+}
+
+/**
+ * Build the absolute public URL for a request when running behind a reverse
+ * proxy. Next.js 16's `request.url` resolves to the internal bind address
+ * (e.g. `http://0.0.0.0:3000/...`) because it ignores forwarded headers for
+ * URL construction. Clerk's `session.redirectToSignIn({ returnBackUrl })`
+ * relays that value back, and Clerk rejects unknown origins with 403.
+ *
+ * Per Caddyfile at /opt/openclaw/caddy/Caddyfile (mc-* stanzas), the proxy
+ * forwards `X-Forwarded-Host = {http.request.tls.server_name}` and
+ * `X-Forwarded-Proto = {scheme}` for every MC request.
+ */
+function getPublicReturnUrl(request: NextRequest): string {
+  const proto = (request.headers.get('x-forwarded-proto') || 'https').split(',')[0].trim()
+  const host = (
+    request.headers.get('x-forwarded-host') ||
+    request.headers.get('host') ||
+    request.nextUrl.host ||
+    'localhost'
+  ).split(',')[0].trim()
+  const pathWithQuery = request.nextUrl.pathname + (request.nextUrl.search || '')
+  return `${proto}://${host}${pathWithQuery}`
 }
 
 function getRequestHostCandidates(request: NextRequest): string[] {
@@ -302,7 +329,7 @@ const clerkWrappedProxy = clerkMiddleware(async (auth, request: NextRequest) => 
     if (request.nextUrl.pathname.startsWith('/api/')) {
       return new NextResponse('Unauthorized', { status: 401 })
     }
-    return session.redirectToSignIn({ returnBackUrl: request.url })
+    return session.redirectToSignIn({ returnBackUrl: getPublicReturnUrl(request) })
   }
   const claims = session.sessionClaims as
     | { email?: string; o?: { id?: string; slg?: string } }
@@ -317,7 +344,7 @@ const clerkWrappedProxy = clerkMiddleware(async (auth, request: NextRequest) => 
     if (request.nextUrl.pathname.startsWith('/api/')) {
       return new NextResponse('Forbidden — org mismatch', { status: 403 })
     }
-    return session.redirectToSignIn({ returnBackUrl: request.url })
+    return session.redirectToSignIn({ returnBackUrl: getPublicReturnUrl(request) })
   }
 
   // Build a new NextRequest carrying the trusted Clerk headers.
@@ -346,3 +373,8 @@ export default proxy
 export const config = {
   matcher: ['/((?!_next/static|_next/image|favicon.ico|brand/).*)']
 }
+
+// Test-only re-export so unit tests can call getPublicReturnUrl directly
+// without setting up @clerk/nextjs mocks. Underscored prefix signals
+// "internal — do not import from app code".
+export const __test_getPublicReturnUrl = getPublicReturnUrl
