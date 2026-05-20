@@ -285,7 +285,17 @@ export function runProxyLogic(request: NextRequest) {
   // Check for session cookie
   const sessionToken = request.cookies.get(MC_SESSION_COOKIE_NAME)?.value || request.cookies.get(LEGACY_MC_SESSION_COOKIE_NAME)?.value
 
-  // API routes: accept session cookie OR API key
+  // Clerk-authenticated requests carry trusted headers injected by the
+  // clerkMiddleware wrapper above (proxy.ts:323-327). When Clerk is the
+  // active auth path, these headers are the source of truth — equivalent
+  // to a valid MC session cookie. clerkMiddleware already verified the
+  // JWT + ran the org-slug gate before this point, so trusting the headers
+  // here is safe. Pre-cutover (Clerk disabled) the wrapper strips these
+  // headers via stripClerkHeadersFromRequest, so this branch is dead code
+  // when Clerk is off.
+  const hasClerkAuth = Boolean((request.headers.get('x-clerk-user-id') || '').trim())
+
+  // API routes: accept session cookie OR API key OR Clerk headers
   if (pathname.startsWith('/api/')) {
     const configuredApiKey = (process.env.API_KEY || '').trim()
     const apiKey = extractApiKeyFromRequest(request)
@@ -295,7 +305,7 @@ export function runProxyLogic(request: NextRequest) {
     // allowed to pass through proxy auth gate.
     const looksLikeAgentApiKey = /^mca_[a-f0-9]{48}$/i.test(apiKey)
 
-    if (sessionToken || hasValidApiKey || looksLikeAgentApiKey) {
+    if (sessionToken || hasValidApiKey || looksLikeAgentApiKey || hasClerkAuth) {
       const { response, nonce } = nextResponseWithNonce(request)
       return addSecurityHeaders(response, request, nonce)
     }
@@ -303,8 +313,8 @@ export function runProxyLogic(request: NextRequest) {
     return addSecurityHeaders(NextResponse.json({ error: 'Unauthorized' }, { status: 401 }), request)
   }
 
-  // Page routes: redirect to login if no session
-  if (sessionToken) {
+  // Page routes: redirect to login if no session AND no Clerk auth
+  if (sessionToken || hasClerkAuth) {
     const { response, nonce } = nextResponseWithNonce(request)
     return addSecurityHeaders(response, request, nonce)
   }
