@@ -5,6 +5,7 @@ import type { NextFetchEvent } from 'next/server'
 import { clerkMiddleware, createRouteMatcher } from '@clerk/nextjs/server'
 import { buildMissionControlCsp, buildNonceRequestHeaders } from '@/lib/csp'
 import { MC_SESSION_COOKIE_NAME, LEGACY_MC_SESSION_COOKIE_NAME } from '@/lib/session-cookie'
+import { userHasOrgMembership } from '@/lib/clerk-org-membership'
 
 // Phase 3 BUILD D2-D6 — Clerk SSO edge integration.
 // When CLERK_SECRET_KEY is set, the proxy first runs Clerk JWT
@@ -350,17 +351,31 @@ const clerkWrappedProxy = clerkMiddleware(async (auth, request: NextRequest) => 
   const email = claims?.email || ''
 
   const expectedOrg = (process.env.MC_CLERK_ORG_SLUG || '').trim()
+  let effectiveOrgSlug = orgSlug
   if (expectedOrg && orgSlug !== expectedOrg) {
-    if (request.nextUrl.pathname.startsWith('/api/')) {
-      return new NextResponse('Forbidden — org mismatch', { status: 403 })
+    // Bug 7 (2026-05-21) — cross-tenant nav fallback. The user's active
+    // Clerk org may differ from this satellite's expected org even when
+    // they are a member of both. Without a membership fallback this
+    // loops: org gate → redirectToSignIn → primary /admin/login →
+    // <SignIn forceRedirectUrl> no-ops on already-signed-in user.
+    const isMember = await userHasOrgMembership(session.userId, expectedOrg)
+    if (!isMember) {
+      if (request.nextUrl.pathname.startsWith('/api/')) {
+        return new NextResponse('Forbidden — org mismatch', { status: 403 })
+      }
+      return session.redirectToSignIn({ returnBackUrl: getPublicReturnUrl(request) })
     }
-    return session.redirectToSignIn({ returnBackUrl: getPublicReturnUrl(request) })
+    // Member of expected org but active session is a different org.
+    // Override the downstream org header so auth.ts sees the satellite's
+    // expected org context. Each MC container is per-tenant isolated so
+    // cross-tenant data leak is bounded by container scope.
+    effectiveOrgSlug = expectedOrg
   }
 
   // Build a new NextRequest carrying the trusted Clerk headers.
   const headers = new Headers(request.headers)
   headers.set('x-clerk-user-email', email || session.userId)
-  headers.set('x-clerk-org-slug', orgSlug)
+  headers.set('x-clerk-org-slug', effectiveOrgSlug)
   headers.set('x-clerk-user-id', session.userId)
   const requestWithClerk = new NextRequest(request, { headers })
   return runProxyLogic(requestWithClerk)
