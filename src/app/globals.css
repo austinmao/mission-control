@@ -871,6 +871,16 @@
   --surface-1: 0 0% 100%;              /* Snow (card) */
   --surface-2: 220 10% 96%;            /* Fog (alt section / footer) */
   --surface-3: 220 8% 93%;             /* Pebble (chip / well) */
+
+  /* Legacy hex-style vars — mirrors AC admin/sidebar consumers (canonical
+   * @lumina/design-tokens block of the same name). NOT shadcn HSL-triplet —
+   * these are resolved CSS color values. Future cross-repo @import (Phase 2)
+   * will retire this manual mirror. */
+  --surface: hsl(0, 0%, 100%);         /* Snow — primary admin chrome surface */
+  --ink: hsl(220, 13%, 4%);            /* Ink — primary heading/body text */
+  --ink-muted: hsl(222, 8%, 40%);      /* Ash — muted text */
+  --ink-faint: hsl(222, 9%, 55%);      /* Slate — tertiary text, captions */
+  --border-2: hsl(220, 10%, 88%);      /* Mist-strong — admin chrome borders */
 }
 
 /* Themed backgrounds */
