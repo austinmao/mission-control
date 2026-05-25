@@ -83,3 +83,20 @@ describe('isClerkPublicRoute matcher — /api/status must NOT be in publicRoutes
     expect(matcherBlock).not.toContain("'/api/status'")
   })
 })
+
+describe('/api/status route — capabilities must be pre-auth', () => {
+  it('handles ?action=capabilities before requireRole in route source', async () => {
+    const fs = await import('node:fs')
+    const path = await import('node:path')
+    const routeSrc = fs.readFileSync(
+      path.resolve(__dirname, '../../app/api/status/route.ts'),
+      'utf8'
+    )
+    // capabilities pre-auth block must appear before requireRole call
+    const capIdx = routeSrc.indexOf("preAction === 'capabilities'")
+    const authIdx = routeSrc.indexOf('requireRole(')
+    expect(capIdx).toBeGreaterThan(-1)
+    expect(authIdx).toBeGreaterThan(-1)
+    expect(capIdx).toBeLessThan(authIdx)
+  })
+})

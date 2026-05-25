@@ -16,11 +16,15 @@ import { isHermesInstalled, scanHermesSessions } from '@/lib/hermes-sessions'
 import { registerMcAsDashboard } from '@/lib/gateway-runtime'
 
 export async function GET(request: NextRequest) {
-  // Docker/Kubernetes health probes must work without auth/cookies.
+  // Docker/Kubernetes health probes and page startup capabilities probe must work without auth/cookies.
   const preAction = new URL(request.url).searchParams.get('action') || 'overview'
   if (preAction === 'health') {
     const health = await performHealthCheck()
     return NextResponse.json(health)
+  }
+  if (preAction === 'capabilities') {
+    const capabilities = await getCapabilities(request)
+    return NextResponse.json(capabilities)
   }
 
   const auth = requireRole(request, 'viewer')
