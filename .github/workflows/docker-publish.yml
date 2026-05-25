@@ -50,8 +50,8 @@ jobs:
         uses: docker/login-action@v3
         with:
           registry: ghcr.io
-          username: ${{ github.actor }}
-          password: ${{ secrets.GITHUB_TOKEN }}
+          username: austinmao
+          password: ${{ secrets.CR_PAT }}
 
       - name: Log in to Docker Hub
         if: env.DOCKERHUB_ENABLED == 'true'
