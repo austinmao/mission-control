@@ -128,17 +128,19 @@ function dedupeTokenRecords(records: TokenUsageRecord[]): TokenUsageRecord[] {
   const deduped: TokenUsageRecord[] = []
 
   for (const record of records) {
+    // Normalize timestamp to second precision so DB records (created_at in
+    // seconds) and file records (Date.now() in ms) dedup correctly. Exclude
+    // `operation` (DB hardcodes 'heartbeat'; file uses 'chat_completion') and
+    // `duration` (not stored in DB) — they vary by source, not by identity.
     const key = [
       record.sessionId,
       record.model,
-      record.timestamp,
+      Math.floor(record.timestamp / 1000),
       record.inputTokens,
       record.outputTokens,
       record.totalTokens,
-      record.operation,
       record.taskId ?? '',
       record.workspaceId ?? 1,
-      record.duration ?? '',
     ].join('|')
     if (seen.has(key)) continue
     seen.add(key)

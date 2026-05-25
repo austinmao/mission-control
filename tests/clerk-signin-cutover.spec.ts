@@ -21,7 +21,7 @@ test.describe('Phase 3 D6 — Clerk sign-in cutover (all 3 MCs)', () => {
       expect([302, 307]).toContain(res.status())
       const loc = res.headers()['location']
       expect(loc).toBeTruthy()
-      expect(loc).toMatch(/^https:\/\/accounts\.holalumina\.com\/sign-in/)
+      expect(loc).toMatch(/^https:\/\/app\.holalumina\.com\/admin\/login/)
       // Clerk middleware diagnostic header confirms middleware (not Caddy/fallback)
       const reason = res.headers()['x-clerk-auth-reason']
       expect(reason).toBe('session-token-and-uat-missing')
@@ -38,6 +38,6 @@ test.describe('Phase 3 D6 — Clerk sign-in cutover (all 3 MCs)', () => {
       }),
     )
     const unique = Array.from(new Set(locs))
-    expect(unique).toEqual(['https://accounts.holalumina.com/sign-in'])
+    expect(unique).toEqual(['https://app.holalumina.com/admin/login'])
   })
 })
