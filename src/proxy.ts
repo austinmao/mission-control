@@ -36,6 +36,7 @@ const isClerkPublicRoute = createRouteMatcher([
   '/api/auth/google(.*)',
   '/api/docs',
   '/docs',
+  '/api/status',
 ])
 
 function isPublicHealthStatusProbe(request: NextRequest): boolean {
