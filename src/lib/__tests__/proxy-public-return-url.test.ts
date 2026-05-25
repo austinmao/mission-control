@@ -64,8 +64,8 @@ describe('getPublicReturnUrl (returnBackUrl for Clerk)', () => {
   })
 })
 
-describe('isClerkPublicRoute matcher includes /api/status for Docker healthcheck', () => {
-  it('lists /api/status in createRouteMatcher block', async () => {
+describe('isClerkPublicRoute matcher — /api/status must NOT be in publicRoutes', () => {
+  it('does not list /api/status in createRouteMatcher (isPublicHealthStatusProbe handles it)', async () => {
     const fs = await import('node:fs')
     const path = await import('node:path')
     const proxySrc = fs.readFileSync(
@@ -76,6 +76,10 @@ describe('isClerkPublicRoute matcher includes /api/status for Docker healthcheck
       /isClerkPublicRoute = createRouteMatcher\(\[([\s\S]*?)\]\)/
     )?.[1]
     expect(matcherBlock).toBeTruthy()
-    expect(matcherBlock).toContain("'/api/status'")
+    // /api/status must NOT be in the Clerk public-route matcher.
+    // The health + capabilities probes are handled by isPublicHealthStatusProbe
+    // before Clerk auth runs; adding it to the matcher skips x-clerk-user-id
+    // injection, causing 401 for authenticated browser requests.
+    expect(matcherBlock).not.toContain("'/api/status'")
   })
 })
