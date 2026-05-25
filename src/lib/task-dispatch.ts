@@ -674,8 +674,11 @@ function isClaudeCliAvailable(): boolean {
 function isDirectDispatchAvailable(provider?: DirectProvider): boolean {
   if (provider === 'anthropic') return !!getAnthropicApiKey() || isClaudeCliAvailable()
   if (provider === 'openai') return !!getOpenAIApiKey()
-  if (provider === 'local') return !!getLocalEndpoint()
-  return !!getAnthropicApiKey() || !!getOpenAIApiKey() || !!getLocalEndpoint() || isClaudeCliAvailable()
+  // Local endpoint only counts as "available" when explicitly configured — the
+  // hardcoded LMStudio default in getLocalEndpoint() is a runtime fallback URL,
+  // not evidence that a local LLM is actually reachable.
+  if (provider === 'local') return !!process.env.LOCAL_LLM_ENDPOINT?.trim()
+  return !!getAnthropicApiKey() || !!getOpenAIApiKey() || !!process.env.LOCAL_LLM_ENDPOINT?.trim() || isClaudeCliAvailable()
 }
 
 /**
