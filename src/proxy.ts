@@ -36,12 +36,12 @@ const isClerkPublicRoute = createRouteMatcher([
   '/api/auth/google(.*)',
   '/api/docs',
   '/docs',
-  '/api/status',
 ])
 
 function isPublicHealthStatusProbe(request: NextRequest): boolean {
   if (request.nextUrl.pathname !== '/api/status') return false
-  return request.nextUrl.searchParams.get('action') === 'health'
+  const action = request.nextUrl.searchParams.get('action') ?? ''
+  return action === 'health' || action === 'capabilities'
 }
 
 /** Constant-time string comparison using Node.js crypto. */
@@ -278,9 +278,9 @@ export function runProxyLogic(request: NextRequest) {
     }
   }
 
-  // Allow login, setup, auth API, docs, and container health probe without session
-  const isPublicHealthProbe = pathname === '/api/status' && request.nextUrl.searchParams.get('action') === 'health'
-  if (pathname === '/login' || pathname === '/setup' || pathname.startsWith('/api/auth/') || pathname === '/api/setup' || pathname === '/api/docs' || pathname === '/docs' || isPublicHealthProbe) {
+  // Allow login, setup, auth API, docs, and container health/capabilities probe without session
+  const isPublicStatusProbe = pathname === '/api/status' && ['health', 'capabilities'].includes(request.nextUrl.searchParams.get('action') ?? '')
+  if (pathname === '/login' || pathname === '/setup' || pathname.startsWith('/api/auth/') || pathname === '/api/setup' || pathname === '/api/docs' || pathname === '/docs' || isPublicStatusProbe) {
     const { response, nonce } = nextResponseWithNonce(request)
     return addSecurityHeaders(response, request, nonce)
   }
@@ -334,8 +334,8 @@ export function runProxyLogic(request: NextRequest) {
 // we first run clerkMiddleware → verify JWT → org gate → inject trusted
 // headers, then call `proxy` with the augmented request.
 const clerkWrappedProxy = clerkMiddleware(async (auth, request: NextRequest) => {
-  // Docker healthcheck.js hits /api/status?action=health without Clerk cookies.
-  // Allow that exact probe; every other /api/status action must run Clerk.
+  // /api/status?action=health — Docker healthcheck, no Clerk cookies.
+  // /api/status?action=capabilities — page startup probe, safe to expose (returns gateway bool only).
   if (isPublicHealthStatusProbe(request)) {
     return runProxyLogic(request)
   }
