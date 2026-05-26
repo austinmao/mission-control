@@ -11,8 +11,7 @@ All notable changes to Mission Control are documented in this file.
 ## [2.0.2] - 2026-05-26
 
 ### Fixed
-- Task dispatch now delivers agent responses as standalone user-turn messages (`deliver: true`) so completed task text is readable in the UI, replacing the previous placeholder "Deferred agent run completed without textual output."
-- Aegis review dispatch uses the same delivery mode fix, ensuring review results surface correctly.
+- Task dispatch now delivers agent responses as standalone user-turn messages (`deliver: true`) so completed task text is readable in the UI, replacing the previous placeholder "Deferred agent run completed without textual output." Applies to all three dispatch paths: new-session invoke, existing-session `chat.send`, and Aegis review.
 - Test suite now forces gateway availability in the reconciliation tests, making dispatch routing environment-independent regardless of whether `ANTHROPIC_API_KEY` or the `claude` CLI is present in the test environment.
 
 ---

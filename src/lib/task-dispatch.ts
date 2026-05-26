@@ -1277,7 +1277,7 @@ export async function dispatchAssignedTasks(): Promise<{ ok: boolean; message: s
             sessionKey: targetSession,
             message: prompt,
             idempotencyKey: `task-dispatch-${task.id}-${Date.now()}`,
-            deliver: false,
+            deliver: true,
           },
           125_000,
         )
