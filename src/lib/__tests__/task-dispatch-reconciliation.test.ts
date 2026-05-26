@@ -257,8 +257,8 @@ describe('deferred task completion reconciliation', () => {
 
     expect(mockDbState.callOpenClawGateway).toHaveBeenCalledWith(
       'agent.wait',
-      { runId: 'run-timeout', timeoutMs: 1000 },
-      3000,
+      { runId: 'run-timeout', timeoutMs: 25000 },
+      30000,
     )
     expect(result.promoted).toBe(0)
     expect(mockDbState.updates).toHaveLength(0)
