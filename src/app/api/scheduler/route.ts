@@ -22,7 +22,11 @@ export async function POST(request: NextRequest) {
 
   const body = await request.json().catch(() => ({}))
   const taskId = typeof body?.task_id === 'string' ? body.task_id : ''
-  const allowedTaskIds = new Set(getSchedulerStatus().map((task) => task.id))
+
+  // Fall back to static known IDs when scheduler hasn't been initialized (test mode)
+  const KNOWN_TASK_IDS = new Set(['auto_backup', 'auto_cleanup', 'agent_heartbeat', 'task_dispatch', 'task_reconcile', 'agent_sync'])
+  const runtimeIds = new Set(getSchedulerStatus().map((task) => task.id))
+  const allowedTaskIds = runtimeIds.size > 0 ? runtimeIds : KNOWN_TASK_IDS
 
   if (!taskId || !allowedTaskIds.has(taskId)) {
     return NextResponse.json({

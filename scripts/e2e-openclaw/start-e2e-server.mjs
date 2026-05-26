@@ -3,6 +3,7 @@ import { spawn } from 'node:child_process'
 import { randomBytes, scryptSync } from 'node:crypto'
 import fs from 'node:fs'
 import net from 'node:net'
+import os from 'node:os'
 import path from 'node:path'
 import process from 'node:process'
 import Database from 'better-sqlite3'
@@ -36,7 +37,7 @@ async function findAvailablePort(host = '127.0.0.1') {
 
 const modeArg = process.argv.find((arg) => arg.startsWith('--mode='))
 const mode = modeArg ? modeArg.split('=')[1] : 'local'
-if (mode !== 'local' && mode !== 'gateway') {
+if (mode !== 'local' && mode !== 'gateway' && mode !== 'real-gateway') {
   process.stderr.write(`Invalid mode: ${mode}\n`)
   process.exit(1)
 }
@@ -222,10 +223,45 @@ mcDb.prepare(`
   INSERT OR IGNORE INTO users (username, display_name, password_hash, role, provider, is_approved, workspace_id)
   VALUES (?, ?, ?, 'admin', 'local', 1, 1)
 `).run(e2eUsername, e2eUsername.charAt(0).toUpperCase() + e2eUsername.slice(1), hashPassword(e2ePassword))
+
+// Seed agents from fixture openclaw.json so GET /api/agents returns them immediately.
+// The scheduler is disabled in MISSION_CONTROL_TEST_MODE, so sync never runs —
+// we seed directly here instead.
+mcDb.exec(`
+  CREATE TABLE IF NOT EXISTS agents (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    name TEXT NOT NULL UNIQUE,
+    role TEXT NOT NULL,
+    session_key TEXT UNIQUE,
+    soul_content TEXT,
+    status TEXT NOT NULL DEFAULT 'offline',
+    last_seen INTEGER,
+    last_activity TEXT,
+    created_at INTEGER NOT NULL DEFAULT (unixepoch()),
+    updated_at INTEGER NOT NULL DEFAULT (unixepoch()),
+    config TEXT,
+    workspace_id INTEGER NOT NULL DEFAULT 1
+  )
+`)
+const e2eAgentConfig = JSON.stringify({
+  openclawId: 'main',
+  model: { primary: 'anthropic/claude-sonnet-4-5' },
+  identity: { name: 'Main Agent', theme: 'orchestrator', emoji: ':robot:' },
+  isDefault: true,
+})
+mcDb.prepare(`
+  INSERT OR IGNORE INTO agents (name, role, status, config, workspace_id)
+  VALUES ('Main Agent', 'orchestrator', 'offline', ?, 1)
+`).run(e2eAgentConfig)
 mcDb.close()
 
-const gatewayHost = '127.0.0.1'
-const gatewayPort = String(await findAvailablePort(gatewayHost))
+// For real-gateway mode, use the real gateway coords from env; for mock/local use loopback.
+const gatewayHost = mode === 'real-gateway'
+  ? (process.env.OPENCLAW_GATEWAY_HOST || 'https://gateway.holalumina.com')
+  : '127.0.0.1'
+const gatewayPort = mode === 'real-gateway'
+  ? (process.env.OPENCLAW_GATEWAY_PORT || '443')
+  : String(await findAvailablePort('127.0.0.1'))
 
 const baseEnv = {
   ...process.env,
@@ -246,7 +282,7 @@ const baseEnv = {
   MISSION_CONTROL_DB_PATH: path.join(dataDir, 'mission-control.db'),
   HOME: runtimeRoot,
   OPENCODE_DB_PATH: openCodeDbPath,
-  OPENCLAW_STATE_DIR: runtimeRoot,
+  OPENCLAW_STATE_DIR: mode === 'real-gateway' ? path.join(os.homedir(), '.openclaw') : runtimeRoot,
   OPENCLAW_CONFIG_PATH: path.join(runtimeRoot, 'openclaw.json'),
   OPENCLAW_GATEWAY_HOST: gatewayHost,
   OPENCLAW_GATEWAY_PORT: gatewayPort,
@@ -259,7 +295,7 @@ const baseEnv = {
   MC_SKILLS_PROJECT_CODEX_DIR: path.join(skillsRoot, 'project-codex'),
   MC_SKILLS_OPENCLAW_DIR: path.join(skillsRoot, 'openclaw'),
   PATH: `${mockBinDir}:${process.env.PATH || ''}`,
-  E2E_GATEWAY_EXPECTED: mode === 'gateway' ? '1' : '0',
+  E2E_GATEWAY_EXPECTED: (mode === 'gateway' || mode === 'real-gateway') ? '1' : '0',
 }
 
 const children = []

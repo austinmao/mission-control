@@ -18,7 +18,7 @@ export default defineConfig({
     { name: 'chromium', use: { ...devices['Desktop Chrome'] } }
   ],
   webServer: {
-    command: 'node scripts/e2e-openclaw/start-e2e-server.mjs --mode=gateway',
+    command: 'node scripts/e2e-openclaw/start-e2e-server.mjs --mode=real-gateway',
     url: 'http://127.0.0.1:3005',
     reuseExistingServer: false,
     timeout: 120_000,
@@ -37,6 +37,9 @@ export default defineConfig({
       API_KEY: process.env.API_KEY || 'test-api-key-e2e-12345',
       AUTH_USER: process.env.AUTH_USER || 'testadmin',
       AUTH_PASS: process.env.AUTH_PASS || 'testpass1234!',
+      OPENCLAW_GATEWAY_HOST: process.env.OPENCLAW_GATEWAY_HOST || 'http://127.0.0.1:18789',
+      OPENCLAW_GATEWAY_PORT: process.env.OPENCLAW_GATEWAY_PORT || '18789',
+      OPENCLAW_GATEWAY_TOKEN: process.env.OPENCLAW_GATEWAY_TOKEN || 'aa12af69ade407c43a7e347033c73127d26fc868067a8674',
     },
   }
 })
