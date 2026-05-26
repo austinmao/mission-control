@@ -6,6 +6,12 @@ All notable changes to Mission Control are documented in this file.
 
 ## [Unreleased]
 
+### Fixed
+- `POST /api/spawn` no longer fails with HTTP 500 "unknown method: sessions_spawn". The route now implements spawn semantics using existing gateway primitives (`sessions.create` + `chat.send`) and registers the spawned agent directly in MC's local DB so `/api/agents` count increases immediately. Gateway call failures are non-fatal; the spawn succeeds regardless.
+
+### Tests
+- New unit test suite for `POST /api/spawn` covering: successful spawn, gateway failure fallback, DB insert failure fallback, label deduplication, and injection blocking.
+
 ---
 
 ## [2.0.2] - 2026-05-26
