@@ -411,7 +411,7 @@ describe('existing-session deferred dispatch', () => {
       'chat.send',
       expect.objectContaining({
         sessionKey: 'session-123',
-        deliver: false,
+        deliver: true,
       }),
       125_000,
     )
