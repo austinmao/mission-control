@@ -18,12 +18,16 @@ export default defineConfig({
     { name: 'chromium', use: { ...devices['Desktop Chrome'] } }
   ],
   webServer: {
-    command: 'node scripts/e2e-openclaw/start-e2e-server.mjs --mode=local',
+    command: 'node scripts/e2e-openclaw/start-e2e-server.mjs --mode=gateway',
     url: 'http://127.0.0.1:3005',
     reuseExistingServer: false,
     timeout: 120_000,
     env: {
       ...process.env,
+      // Disable Clerk so API-key auth works in e2e
+      CLERK_SECRET_KEY: '',
+      NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY: '',
+      CLERK_JWT_KEY: '',
       MISSION_CONTROL_TEST_MODE: process.env.MISSION_CONTROL_TEST_MODE || '1',
       MC_DISABLE_RATE_LIMIT: process.env.MC_DISABLE_RATE_LIMIT || '1',
       MC_WORKLOAD_QUEUE_DEPTH_THROTTLE: process.env.MC_WORKLOAD_QUEUE_DEPTH_THROTTLE || '1000',

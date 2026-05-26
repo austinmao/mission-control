@@ -1,10 +1,18 @@
 #!/usr/bin/env node
 import { spawn } from 'node:child_process'
+import { randomBytes, scryptSync } from 'node:crypto'
 import fs from 'node:fs'
 import net from 'node:net'
 import path from 'node:path'
 import process from 'node:process'
 import Database from 'better-sqlite3'
+
+// Mirrors src/lib/password.ts — must stay in sync with SALT_LENGTH, KEY_LENGTH, SCRYPT_COST
+function hashPassword(password) {
+  const salt = randomBytes(16).toString('hex')
+  const hash = scryptSync(password, salt, 32, { N: 65536, maxmem: 128 * 65536 * 8 * 2 }).toString('hex')
+  return `${salt}:${hash}`
+}
 
 async function findAvailablePort(host = '127.0.0.1') {
   return await new Promise((resolve, reject) => {
@@ -184,11 +192,49 @@ openCodeDb.prepare(`INSERT OR REPLACE INTO message (id, session_id, data, time_c
 )
 openCodeDb.close()
 
+// Seed MC DB admin user so the browser login works on a fresh e2e DB
+const mcDbPath = path.join(dataDir, 'mission-control.db')
+const mcDb = new Database(mcDbPath)
+const e2eUsername = process.env.AUTH_USER || 'testadmin'
+const e2ePassword = process.env.AUTH_PASS || 'testpass1234!'
+mcDb.exec(`
+  CREATE TABLE IF NOT EXISTS users (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    username TEXT NOT NULL UNIQUE,
+    display_name TEXT NOT NULL,
+    password_hash TEXT NOT NULL,
+    role TEXT NOT NULL DEFAULT 'operator',
+    provider TEXT NOT NULL DEFAULT 'local',
+    provider_user_id TEXT,
+    email TEXT,
+    avatar_url TEXT,
+    is_approved INTEGER NOT NULL DEFAULT 1,
+    approved_by TEXT,
+    approved_at INTEGER,
+    workspace_id INTEGER NOT NULL DEFAULT 1,
+    clerk_user_id TEXT,
+    created_at INTEGER NOT NULL DEFAULT (unixepoch()),
+    updated_at INTEGER NOT NULL DEFAULT (unixepoch()),
+    last_login_at INTEGER
+  )
+`)
+mcDb.prepare(`
+  INSERT OR IGNORE INTO users (username, display_name, password_hash, role, provider, is_approved, workspace_id)
+  VALUES (?, ?, ?, 'admin', 'local', 1, 1)
+`).run(e2eUsername, e2eUsername.charAt(0).toUpperCase() + e2eUsername.slice(1), hashPassword(e2ePassword))
+mcDb.close()
+
 const gatewayHost = '127.0.0.1'
 const gatewayPort = String(await findAvailablePort(gatewayHost))
 
 const baseEnv = {
   ...process.env,
+  // Disable Clerk so API-key auth works in e2e; do not inherit live Clerk keys
+  CLERK_SECRET_KEY: '',
+  NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY: '',
+  // Force non-Secure cookies so the browser sends them over HTTP (127.0.0.1:3005)
+  MC_COOKIE_SECURE: '0',
+  CLERK_JWT_KEY: '',
   API_KEY: process.env.API_KEY || 'test-api-key-e2e-12345',
   AUTH_USER: process.env.AUTH_USER || 'admin',
   AUTH_PASS: process.env.AUTH_PASS || 'admin',
@@ -248,6 +294,23 @@ if (!fs.existsSync(buildIdPath)) {
 }
 
 const standaloneServerPath = findStandaloneServer(repoRoot)
+
+// Standalone builds omit .next/static and public — copy them in so the
+// server can serve JS/CSS chunks. Without this every chunk returns text/html
+// and React never hydrates, causing form submits to fire as native GET.
+if (standaloneServerPath) {
+  const standaloneDir = path.dirname(standaloneServerPath)
+  const staticSrc = path.join(repoRoot, '.next', 'static')
+  const staticDst = path.join(standaloneDir, '.next', 'static')
+  if (fs.existsSync(staticSrc) && !fs.existsSync(staticDst)) {
+    fs.cpSync(staticSrc, staticDst, { recursive: true })
+  }
+  const publicSrc = path.join(repoRoot, 'public')
+  const publicDst = path.join(standaloneDir, 'public')
+  if (fs.existsSync(publicSrc) && !fs.existsSync(publicDst)) {
+    fs.cpSync(publicSrc, publicDst, { recursive: true })
+  }
+}
 
 app = standaloneServerPath && fs.existsSync(standaloneServerPath)
   ? spawn('node', [standaloneServerPath], {

@@ -68,6 +68,14 @@ async function pollUntil<T>(
 async function getOnlineGateway(
   request: APIRequestContext
 ): Promise<{ id: number; name: string } | null> {
+  // GET first — auto-seeds the gateway record from env vars if table is empty
+  const seed = await request.get('/api/gateways', { headers: API_KEY_HEADER })
+  if (!seed.ok()) return null
+
+  // Now probe health — transitions seeded gateway from 'unknown' → 'online'
+  await request.post('/api/gateways/health', { headers: API_KEY_HEADER }).catch(() => {})
+
+  // Re-fetch to get the updated status
   const res = await request.get('/api/gateways', { headers: API_KEY_HEADER })
   if (!res.ok()) return null
   const body = await res.json()
@@ -89,6 +97,17 @@ async function getMainAgentName(request: APIRequestContext): Promise<string | nu
   return main?.name ?? null
 }
 
+/** Run first-time setup if no admin exists yet (fresh e2e DB). */
+async function ensureAdminUser(request: APIRequestContext): Promise<void> {
+  const check = await request.get('/api/setup').catch(() => null)
+  if (!check?.ok()) return
+  const { needsSetup } = await check.json()
+  if (!needsSetup) return
+  await request.post('/api/setup', {
+    data: { username: MC_USER, password: MC_PASS, displayName: 'E2E Admin' },
+  }).catch(() => {})
+}
+
 // ── suite ─────────────────────────────────────────────────────────────────────
 
 test.describe('Live task-dispatch — MC browser (requires gateway)', () => {
@@ -96,6 +115,7 @@ test.describe('Live task-dispatch — MC browser (requires gateway)', () => {
   let mainAgentName: string | null = null
 
   test.beforeAll(async ({ request }) => {
+    await ensureAdminUser(request)
     const gw = await getOnlineGateway(request)
     gatewayAvailable = gw !== null
     if (gatewayAvailable) mainAgentName = await getMainAgentName(request)
