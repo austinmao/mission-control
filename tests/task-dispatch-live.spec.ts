@@ -293,13 +293,13 @@ test.describe('Live task-dispatch — MC browser (requires gateway)', () => {
     await expect(page.locator('main').first()).toBeVisible({ timeout: 8_000 })
   })
 
-  // ── 4. /activity — task dispatch event appears in feed ────────────────────
+  // ── 4. /activity — task completes with real resolution, feed shows success ──
 
-  test('MC /activity page: task dispatch event appears in activity feed', async ({
+  test('MC /activity page: task reaches completed status and feed shows no failed resolution', async ({
     page,
     request,
   }) => {
-    test.setTimeout(30_000)
+    test.setTimeout(AGENT_RESPONSE_MS + 25_000)
 
     if (!gatewayAvailable) test.skip(true, 'No online gateway')
     if (!mainAgentName) test.skip(true, 'No main agent found')
@@ -308,40 +308,73 @@ test.describe('Live task-dispatch — MC browser (requires gateway)', () => {
 
     const { id: taskId } = await createTestTask(request, {
       title: `e2e-browser-activity-${Date.now()}`,
+      description: 'Reply with one word: pong',
       assigned_to: mainAgentName,
       status: 'assigned',
+      priority: 'high',
     })
 
     try {
-      // Open MC /activity in browser
+      // Open MC /activity in browser while task runs
       await loginAndNavigate(page, '/activity')
       await expect(page).toHaveURL(/\/activity/, { timeout: 10_000 })
       await expect(page.locator('main').first()).toBeVisible({ timeout: 8_000 })
 
-      // Give the scheduler a moment to write the activity row
-      await page.waitForTimeout(4_000)
+      // Poll API until task reaches a completed (not failed) status
+      const completedTask = await pollUntil(async () => {
+        const res = await request.get(`/api/tasks/${taskId}`, { headers: API_KEY_HEADER })
+        if (!res.ok()) return null
+        const body = await res.json()
+        const task = body.task ?? body
+        return ['completed', 'done', 'review'].includes(task.status) ? task : null
+      }, AGENT_RESPONSE_MS)
 
-      // Verify the event exists in the API (same data the browser feed reads)
-      const res = await request.get(
-        `/api/activities?since=${since}&limit=100`,
+      expect(
+        completedTask,
+        `Task #${taskId} did not reach completed status within ${AGENT_RESPONSE_MS / 1000}s`
+      ).not.toBeNull()
+
+      const resolution: string = completedTask!.resolution ?? ''
+      expect(
+        resolution,
+        'Task resolution is the placeholder — agent.wait timeout fix not active'
+      ).not.toBe(PLACEHOLDER)
+      expect(resolution.trim().length, 'Task resolution is empty').toBeGreaterThan(0)
+
+      // Verify the activity feed recorded this task's events
+      const activitiesRes = await request.get(
+        `/api/activities?since=${since}&limit=200`,
         { headers: API_KEY_HEADER }
       )
-      expect(res.status()).toBe(200)
-      const body = await res.json()
-      const activities: Array<{ type: string; entity_id?: number; description?: string }> =
-        body.activities ?? []
+      expect(activitiesRes.status()).toBe(200)
+      const activitiesBody = await activitiesRes.json()
+      const activities: Array<{
+        type: string
+        entity_id?: number
+        description?: string
+        metadata?: string
+      }> = activitiesBody.activities ?? []
 
-      const taskActivity = activities.find(
+      const taskActivities = activities.filter(
         a =>
-          (a.type?.includes('task') || a.description?.includes('task')) &&
+          (a.type?.includes('task') || a.description?.toLowerCase().includes('task')) &&
           (a.entity_id === taskId || a.description?.includes(String(taskId)))
       )
       expect(
-        taskActivity,
-        `No task activity found for task #${taskId} in activity feed`
-      ).toBeTruthy()
+        taskActivities.length,
+        `No task activity rows found for task #${taskId}`
+      ).toBeGreaterThan(0)
 
-      // Reload /activity — feed must still render after the event write
+      // None of the activity rows for this task should mention placeholder resolution
+      for (const act of taskActivities) {
+        const meta = act.metadata ?? ''
+        expect(
+          meta,
+          `Activity row for task #${taskId} contains placeholder resolution text`
+        ).not.toContain(PLACEHOLDER)
+      }
+
+      // Reload /activity — page must still render cleanly
       await page.reload()
       await expect(page.locator('main').first()).toBeVisible({ timeout: 8_000 })
     } finally {
