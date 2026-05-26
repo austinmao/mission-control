@@ -8,6 +8,15 @@ All notable changes to Mission Control are documented in this file.
 
 ---
 
+## [2.0.2] - 2026-05-26
+
+### Fixed
+- Task dispatch now delivers agent responses as standalone user-turn messages (`deliver: true`) so completed task text is readable in the UI, replacing the previous placeholder "Deferred agent run completed without textual output."
+- Aegis review dispatch uses the same delivery mode fix, ensuring review results surface correctly.
+- Test suite now forces gateway availability in the reconciliation tests, making dispatch routing environment-independent regardless of whether `ANTHROPIC_API_KEY` or the `claude` CLI is present in the test environment.
+
+---
+
 ## [2.0.1] - 2026-03-18
 
 Mission Control 2.0.1 is the first patch release after the v2 launch. It rolls up the full set of fixes and follow-on features that landed after `v2.0.0`, including HTTP/Tailscale login hardening, zero-config onboarding, internationalization, gateway/runtime stability fixes, deeper task-routing automation, and the latest OpenClaw compatibility updates.
