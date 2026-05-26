@@ -980,7 +980,7 @@ export async function runAegisReviews(): Promise<{ ok: boolean; message: string 
           message: prompt,
           agentId: reviewAgent,
           idempotencyKey: `aegis-review-${task.id}-${Date.now()}`,
-          deliver: false,
+          deliver: true,
         }
         const finalPayload = await callOpenClawGateway<any>(
           'agent',
@@ -1277,7 +1277,7 @@ export async function dispatchAssignedTasks(): Promise<{ ok: boolean; message: s
             sessionKey: targetSession,
             message: prompt,
             idempotencyKey: `task-dispatch-${task.id}-${Date.now()}`,
-            deliver: false,
+            deliver: true,
           },
           125_000,
         )
@@ -1337,7 +1337,7 @@ export async function dispatchAssignedTasks(): Promise<{ ok: boolean; message: s
           message: prompt,
           agentId: gatewayAgentId,
           idempotencyKey: `task-dispatch-${task.id}-${Date.now()}`,
-          deliver: false,
+          deliver: true,
         }
         // Route to appropriate model tier based on task complexity.
         // null = no override, agent uses its own configured default model.

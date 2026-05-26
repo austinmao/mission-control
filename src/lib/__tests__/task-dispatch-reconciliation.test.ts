@@ -92,6 +92,11 @@ vi.mock('../db', () => ({
           },
         }
       }
+      // isGatewayAvailable() checks this — return a healthy row so direct-API
+      // path is never taken and all dispatch tests exercise the gateway path.
+      if (sql.includes('FROM gateways') && sql.includes('status')) {
+        return { get: () => ({ c: 1 }) }
+      }
       return {
         all: () => [],
         get: () => undefined,
@@ -406,7 +411,7 @@ describe('existing-session deferred dispatch', () => {
       'chat.send',
       expect.objectContaining({
         sessionKey: 'session-123',
-        deliver: false,
+        deliver: true,
       }),
       125_000,
     )
@@ -473,7 +478,7 @@ describe('existing-session deferred dispatch', () => {
     expect(timeoutMs).toBe(60_000)
     expect(params).toMatchObject({
       agentId: 'arnold',
-      deliver: false,
+      deliver: true,
     })
     expect(params.model).toBeUndefined()
     const metadata = JSON.parse(mockDbState.metadataUpdates[0].metadata)
