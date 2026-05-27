@@ -23,7 +23,7 @@ vi.mock('@/lib/db', () => ({
 
 const AUTH_USER = { user: { id: 1, username: 'admin', role: 'operator', workspace_id: 1 } }
 
-describe('POST /api/spawn — sessions.create + chat.send compatibility path', () => {
+describe('POST /api/spawn — sessions_spawn direct gateway RPC', () => {
   beforeEach(() => {
     vi.resetModules()
     requireRole.mockReturnValue(AUTH_USER)
@@ -38,15 +38,7 @@ describe('POST /api/spawn — sessions.create + chat.send compatibility path', (
     vi.clearAllMocks()
   })
 
-  it('returns 200 and success:true when gateway and DB both succeed', async () => {
-    const selectStmt = { get: vi.fn(() => null) }
-    const insertStmt = { run: vi.fn() }
-    prepare.mockImplementation((sql: string) => {
-      if (sql.includes('SELECT id FROM agents')) return selectStmt
-      if (sql.includes('INSERT INTO agents')) return insertStmt
-      return { run: vi.fn(), get: vi.fn() }
-    })
-
+  it('returns 200 and success:true when gateway succeeds', async () => {
     const { POST } = await import('@/app/api/spawn/route')
     const req = new NextRequest('http://localhost/api/spawn', {
       method: 'POST',
@@ -60,21 +52,14 @@ describe('POST /api/spawn — sessions.create + chat.send compatibility path', (
     expect(res.status).toBe(200)
     expect(body.success).toBe(true)
     expect(body.spawnId).toBeDefined()
-    expect(body.result.agentName).toBe('test-agent')
-    expect(insertStmt.run).toHaveBeenCalledOnce()
+    expect(body.sessionInfo).toBe('spawn-test')
+    expect(body.label).toBe('test-agent')
+    expect(callOpenClawGateway).toHaveBeenCalledWith('sessions_spawn', expect.objectContaining({ task: 'ping reply with pong' }), 30_000)
   })
 
-  it('still returns 200 when sessions.create gateway call fails', async () => {
+  it('returns 500 when sessions_spawn gateway call fails', async () => {
     callOpenClawGateway.mockRejectedValue(new Error('gateway unreachable'))
 
-    const selectStmt = { get: vi.fn(() => null) }
-    const insertStmt = { run: vi.fn() }
-    prepare.mockImplementation((sql: string) => {
-      if (sql.includes('SELECT id FROM agents')) return selectStmt
-      if (sql.includes('INSERT INTO agents')) return insertStmt
-      return { run: vi.fn(), get: vi.fn() }
-    })
-
     const { POST } = await import('@/app/api/spawn/route')
     const req = new NextRequest('http://localhost/api/spawn', {
       method: 'POST',
@@ -85,21 +70,20 @@ describe('POST /api/spawn — sessions.create + chat.send compatibility path', (
     const res = await POST(req)
     const body = await res.json()
 
-    expect(res.status).toBe(200)
-    expect(body.success).toBe(true)
-    expect(insertStmt.run).toHaveBeenCalledOnce()
+    expect(res.status).toBe(500)
+    expect(body.success).toBe(false)
+    expect(body.error).toMatch(/gateway unreachable/i)
   })
 
-  it('still returns 200 when DB insert fails (non-fatal)', async () => {
-    callOpenClawGateway.mockResolvedValue({})
-    prepare.mockImplementation(() => {
-      throw new Error('SQLITE_ERROR')
-    })
+  it('falls back without tools field when gateway rejects it (older gateway versions)', async () => {
+    callOpenClawGateway
+      .mockRejectedValueOnce(new Error('unknown field: tools'))
+      .mockResolvedValueOnce({ sessionKey: 'fallback-session' })
 
     const { POST } = await import('@/app/api/spawn/route')
     const req = new NextRequest('http://localhost/api/spawn', {
       method: 'POST',
-      body: JSON.stringify({ task: 'ping reply with pong', label: 'test-agent', timeoutSeconds: 60 }),
+      body: JSON.stringify({ task: 'ping', label: 'test-agent', timeoutSeconds: 60 }),
       headers: { 'content-type': 'application/json' },
     })
 
@@ -108,31 +92,10 @@ describe('POST /api/spawn — sessions.create + chat.send compatibility path', (
 
     expect(res.status).toBe(200)
     expect(body.success).toBe(true)
-  })
-
-  it('deduplicates agent name when label already exists in DB', async () => {
-    validateBody.mockResolvedValue({ data: { task: 'ping', model: null, label: 'existing-agent', timeoutSeconds: 60 } })
-
-    const selectStmt = { get: vi.fn(() => ({ id: 5 })) }
-    const insertStmt = { run: vi.fn() }
-    prepare.mockImplementation((sql: string) => {
-      if (sql.includes('SELECT id FROM agents')) return selectStmt
-      if (sql.includes('INSERT INTO agents')) return insertStmt
-      return { run: vi.fn(), get: vi.fn() }
-    })
-
-    const { POST } = await import('@/app/api/spawn/route')
-    const req = new NextRequest('http://localhost/api/spawn', {
-      method: 'POST',
-      body: JSON.stringify({ task: 'ping', label: 'existing-agent', timeoutSeconds: 60 }),
-      headers: { 'content-type': 'application/json' },
-    })
-
-    const res = await POST(req)
-    const body = await res.json()
-
-    expect(res.status).toBe(200)
-    expect(body.result.agentName).toMatch(/^existing-agent-\d+$/)
+    expect(body.compatibility.fallbackUsed).toBe(true)
+    // Second call should not include tools field
+    const secondCall = callOpenClawGateway.mock.calls[1]
+    expect(secondCall[1]).not.toHaveProperty('tools')
   })
 
   it('blocks spawn when injection is detected in task', async () => {
@@ -150,5 +113,18 @@ describe('POST /api/spawn — sessions.create + chat.send compatibility path', (
 
     const res = await POST(req)
     expect(res.status).toBe(422)
+  })
+
+  it('logs audit event on successful spawn', async () => {
+    const { POST } = await import('@/app/api/spawn/route')
+    const req = new NextRequest('http://localhost/api/spawn', {
+      method: 'POST',
+      body: JSON.stringify({ task: 'ping', label: 'test-agent', timeoutSeconds: 60 }),
+      headers: { 'content-type': 'application/json' },
+    })
+
+    await POST(req)
+
+    expect(logAuditEvent).toHaveBeenCalledWith(expect.objectContaining({ action: 'agent_spawn' }))
   })
 })

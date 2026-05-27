@@ -1,12 +1,17 @@
 /**
- * CF Access auth path in getUserFromRequest.
+ * Proxy auth path (MC_PROXY_AUTH_HEADER) in getUserFromRequest.
  *
- * When CLERK_SECRET_KEY is unset, cf-access-authenticated-user-email
- * is the trusted signal: auto-provision or resolve an MC user from
- * the authenticated email exactly as the Clerk path does.
+ * When MC_PROXY_AUTH_HEADER is set AND the request originates from a
+ * trusted IP (MC_PROXY_AUTH_TRUSTED_IPS), the value of the configured
+ * header is treated as an authenticated username — no local session
+ * required.
  *
- * When CLERK_SECRET_KEY is set (Clerk enabled), the CF Access path
- * is skipped — Clerk handles auth instead.
+ * CF Access is one use case: set MC_PROXY_AUTH_HEADER=cf-access-authenticated-user-email
+ * and MC_PROXY_AUTH_TRUSTED_IPS to Cloudflare edge IPs. The old hardcoded
+ * CF Access block was removed; this env-var path handles it generically.
+ *
+ * PROXY_AUTH_TRUSTED_IPS is a module-level Set built at load time, so each
+ * test that needs different IP config uses vi.resetModules() + dynamic import.
  */
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 
@@ -30,8 +35,6 @@ vi.mock('@/lib/password', () => ({
 vi.mock('@/lib/event-bus', () => ({
   eventBus: { broadcast: vi.fn(), on: vi.fn(), emit: vi.fn() },
 }))
-
-import { getUserFromRequest } from '@/lib/auth'
 
 function makeRequest(headers: Record<string, string> = {}): Request {
   return new Request('http://localhost/api/test', { headers: new Headers(headers) })
@@ -71,7 +74,23 @@ function makeFakeDb(opts: { userRow?: UserRow | null; workspaceRow?: { id: numbe
   }
 }
 
-describe('CF Access auth path — getUserFromRequest', () => {
+const EXISTING_USER: UserRow = {
+  id: 42,
+  username: 'austin@ceremoniacircle.org',
+  display_name: 'Austin',
+  role: 'admin',
+  workspace_id: 1,
+  tenant_id: 1,
+  provider: 'local',
+  email: 'austin@ceremoniacircle.org',
+  avatar_url: null,
+  is_approved: 1,
+  created_at: 0,
+  updated_at: 0,
+  last_login_at: null,
+}
+
+describe('MC_PROXY_AUTH_HEADER path — getUserFromRequest', () => {
   const originalEnv = process.env
 
   beforeEach(() => {
@@ -81,87 +100,114 @@ describe('CF Access auth path — getUserFromRequest', () => {
     delete process.env.CLERK_SECRET_KEY
     delete process.env.MC_CLERK_ORG_SLUG
     delete process.env.MC_PROXY_AUTH_HEADER
-    delete process.env.API_KEY
+    delete process.env.MC_PROXY_AUTH_TRUSTED_IPS
     delete process.env.MC_PROXY_AUTH_DEFAULT_ROLE
+    delete process.env.API_KEY
+    vi.resetModules()
   })
 
   afterEach(() => {
     process.env = originalEnv
+    vi.resetModules()
   })
 
-  it('resolves existing user from cf-access-authenticated-user-email when Clerk is disabled', () => {
-    getDatabaseSpy.mockReturnValue(
-      makeFakeDb({
-        userRow: {
-          id: 42,
-          username: 'austin@ceremoniacircle.org',
-          display_name: 'Austin',
-          role: 'admin',
-          workspace_id: 1,
-          tenant_id: 1,
-          provider: 'local',
-          email: 'austin@ceremoniacircle.org',
-          avatar_url: null,
-          is_approved: 1,
-          created_at: 0,
-          updated_at: 0,
-          last_login_at: null,
-        },
-      }),
-    )
-    const req = makeRequest({ 'cf-access-authenticated-user-email': 'austin@ceremoniacircle.org' })
+  it('resolves existing user when request comes from trusted IP with configured header', async () => {
+    process.env.MC_PROXY_AUTH_HEADER = 'cf-access-authenticated-user-email'
+    process.env.MC_PROXY_AUTH_TRUSTED_IPS = '127.0.0.1'
+    getDatabaseSpy.mockReturnValue(makeFakeDb({ userRow: EXISTING_USER }))
+
+    const { getUserFromRequest } = await import('@/lib/auth')
+    // extractClientIpFromTrusted reads x-real-ip when xff IPs are all trusted.
+    // Send x-real-ip pointing to the trusted proxy so the check passes.
+    const req = makeRequest({
+      'x-real-ip': '127.0.0.1',
+      'cf-access-authenticated-user-email': 'austin@ceremoniacircle.org',
+    })
     const user = getUserFromRequest(req)
     expect(user).not.toBeNull()
     expect(user!.username).toBe('austin@ceremoniacircle.org')
     expect(user!.role).toBe('admin')
   })
 
-  it('returns null when CF Access header present but user does not exist and no auto-provision role', () => {
+  it('returns null when request IP is not in trusted list', async () => {
+    process.env.MC_PROXY_AUTH_HEADER = 'cf-access-authenticated-user-email'
+    process.env.MC_PROXY_AUTH_TRUSTED_IPS = '10.0.0.1'
+    getDatabaseSpy.mockReturnValue(makeFakeDb({ userRow: EXISTING_USER }))
+
+    const { getUserFromRequest } = await import('@/lib/auth')
+    const req = makeRequest({
+      'x-real-ip': '1.2.3.4', // untrusted IP
+      'cf-access-authenticated-user-email': 'austin@ceremoniacircle.org',
+    })
+    const user = getUserFromRequest(req)
+    expect(user).toBeNull()
+  })
+
+  it('returns null and logs warning when MC_PROXY_AUTH_TRUSTED_IPS is empty (misconfiguration)', async () => {
+    process.env.MC_PROXY_AUTH_HEADER = 'cf-access-authenticated-user-email'
+    // MC_PROXY_AUTH_TRUSTED_IPS intentionally unset
+    getDatabaseSpy.mockReturnValue(makeFakeDb({ userRow: EXISTING_USER }))
+
+    const { getUserFromRequest } = await import('@/lib/auth')
+    const req = makeRequest({
+      'x-forwarded-for': '127.0.0.1',
+      'cf-access-authenticated-user-email': 'austin@ceremoniacircle.org',
+    })
+    const user = getUserFromRequest(req)
+    // Auth fails — misconfiguration path skips resolution
+    expect(user).toBeNull()
+  })
+
+  it('returns null when configured header is absent from request', async () => {
+    process.env.MC_PROXY_AUTH_HEADER = 'cf-access-authenticated-user-email'
+    process.env.MC_PROXY_AUTH_TRUSTED_IPS = '127.0.0.1'
+    getDatabaseSpy.mockReturnValue(makeFakeDb({ userRow: EXISTING_USER }))
+
+    const { getUserFromRequest } = await import('@/lib/auth')
+    const req = makeRequest({ 'x-real-ip': '127.0.0.1' }) // no auth header
+    const user = getUserFromRequest(req)
+    expect(user).toBeNull()
+  })
+
+  it('returns null when user does not exist and no auto-provision role', async () => {
+    process.env.MC_PROXY_AUTH_HEADER = 'cf-access-authenticated-user-email'
+    process.env.MC_PROXY_AUTH_TRUSTED_IPS = '127.0.0.1'
     getDatabaseSpy.mockReturnValue(makeFakeDb({ userRow: null }))
-    const req = makeRequest({ 'cf-access-authenticated-user-email': 'unknown@example.com' })
+
+    const { getUserFromRequest } = await import('@/lib/auth')
+    const req = makeRequest({
+      'x-real-ip': '127.0.0.1',
+      'cf-access-authenticated-user-email': 'unknown@example.com',
+    })
     const user = getUserFromRequest(req)
     expect(user).toBeNull()
   })
 
-  it('returns null (falls through) when no CF Access header and no other auth', () => {
-    getDatabaseSpy.mockReturnValue(makeFakeDb())
-    const req = makeRequest({})
+  it('returns null (falls through) when MC_PROXY_AUTH_HEADER is unset', async () => {
+    // No proxy auth configured — header has no effect
+    getDatabaseSpy.mockReturnValue(makeFakeDb({ userRow: EXISTING_USER }))
+
+    const { getUserFromRequest } = await import('@/lib/auth')
+    const req = makeRequest({
+      'x-real-ip': '127.0.0.1',
+      'cf-access-authenticated-user-email': 'austin@ceremoniacircle.org',
+    })
     const user = getUserFromRequest(req)
     expect(user).toBeNull()
   })
 
-  it('ignores CF Access header when CLERK_SECRET_KEY is set (Clerk takes precedence)', () => {
-    process.env.CLERK_SECRET_KEY = 'sk_test_xxx'
-    getDatabaseSpy.mockReturnValue(
-      makeFakeDb({
-        userRow: {
-          id: 42,
-          username: 'austin@ceremoniacircle.org',
-          display_name: 'Austin',
-          role: 'admin',
-          workspace_id: 1,
-          tenant_id: 1,
-          provider: 'local',
-          email: 'austin@ceremoniacircle.org',
-          avatar_url: null,
-          is_approved: 1,
-          created_at: 0,
-          updated_at: 0,
-          last_login_at: null,
-        },
-      }),
-    )
-    // CF Access header present but Clerk is enabled — Clerk path requires x-clerk-user-email
-    // which is absent, so Clerk falls through AND CF Access block is skipped.
-    const req = makeRequest({ 'cf-access-authenticated-user-email': 'austin@ceremoniacircle.org' })
-    const user = getUserFromRequest(req)
-    expect(user).toBeNull()
-  })
+  it('works with a custom proxy header name (not CF Access)', async () => {
+    process.env.MC_PROXY_AUTH_HEADER = 'x-auth-username'
+    process.env.MC_PROXY_AUTH_TRUSTED_IPS = '10.10.0.1'
+    getDatabaseSpy.mockReturnValue(makeFakeDb({ userRow: EXISTING_USER }))
 
-  it('returns null when CF Access email is empty string', () => {
-    getDatabaseSpy.mockReturnValue(makeFakeDb())
-    const req = makeRequest({ 'cf-access-authenticated-user-email': '   ' })
+    const { getUserFromRequest } = await import('@/lib/auth')
+    const req = makeRequest({
+      'x-real-ip': '10.10.0.1',
+      'x-auth-username': 'austin@ceremoniacircle.org',
+    })
     const user = getUserFromRequest(req)
-    expect(user).toBeNull()
+    expect(user).not.toBeNull()
+    expect(user!.username).toBe('austin@ceremoniacircle.org')
   })
 })

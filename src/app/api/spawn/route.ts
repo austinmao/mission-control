@@ -8,7 +8,7 @@ import { heavyLimiter } from '@/lib/rate-limit'
 import { logger } from '@/lib/logger'
 import { validateBody, spawnAgentSchema } from '@/lib/validation'
 import { scanForInjection } from '@/lib/injection-guard'
-import { logAuditEvent, getDatabase } from '@/lib/db'
+import { logAuditEvent } from '@/lib/db'
 
 function getPreferredToolsProfile(): string {
   return String(process.env.OPENCLAW_TOOLS_PROFILE || 'coding').trim() || 'coding'
@@ -50,8 +50,7 @@ export async function POST(request: NextRequest) {
     // Generate spawn ID
     const spawnId = `spawn-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`
 
-    // Construct the spawn command
-    // Using OpenClaw's sessions_spawn function via clawdbot CLI
+    // Construct the spawn payload for sessions_spawn gateway RPC
     const spawnPayload = {
       task,
       label,
@@ -63,71 +62,25 @@ export async function POST(request: NextRequest) {
     }
 
     try {
-      // sessions_spawn is not yet a registered gateway RPC method in OpenClaw.
-      // Implement equivalent behaviour using sessions.create + chat.send, then
-      // register the spawned session as a new agent in MC's local DB so that
-      // /api/agents reflects the new entry immediately.
-      const sessionKey = `spawn-${spawnId}`
       let result: any = {}
       let compatibilityFallbackUsed = false
 
-      // 1. Create a new session in the gateway (uses the default agent).
+      // Call sessions_spawn via WebSocket RPC. Gateway manages the session
+      // lifecycle and agent assignment. Falls back without tools field if
+      // the gateway rejects it (older gateway versions).
       try {
-        const createResult = await callOpenClawGateway<any>('sessions.create', { key: sessionKey }, 10_000)
-        result = createResult ?? {}
-      } catch (createErr: any) {
-        // sessions.create is best-effort — proceed even if it fails; the session
-        // key is valid as a logical identifier for the spawned work unit.
-        logger.warn({ err: createErr }, 'sessions.create failed during spawn (non-fatal)')
+        result = await callOpenClawGateway<any>('sessions_spawn', spawnPayload, 30_000) ?? {}
+      } catch (spawnErr: any) {
+        if (spawnErr?.message?.includes('tools')) {
+          compatibilityFallbackUsed = true
+          const { tools: _tools, ...payloadWithoutTools } = spawnPayload
+          result = await callOpenClawGateway<any>('sessions_spawn', payloadWithoutTools, 30_000) ?? {}
+        } else {
+          throw spawnErr
+        }
       }
 
-      // 2. Send the task to the new session (fire-and-forget; spawn returns
-      //    immediately, the agent works asynchronously).
-      callOpenClawGateway<any>(
-        'chat.send',
-        {
-          sessionKey,
-          message: task,
-          idempotencyKey: `spawn-send-${spawnId}`,
-          deliver: true,
-        },
-        60_000,
-      ).catch((sendErr: any) => {
-        logger.warn({ err: sendErr }, 'chat.send failed for spawned session (non-fatal)')
-      })
-
-      // 3. Register the spawned session as a new agent entry in MC's local DB so
-      //    /api/agents count increases and the agent appears in the UI.
-      try {
-        const db = getDatabase()
-        const now = Math.floor(Date.now() / 1000)
-        const agentName = label || `spawned-${spawnId.slice(6, 14)}`
-        const workspaceId = (auth.user as any).workspace_id ?? 1
-        const existing = db
-          .prepare('SELECT id FROM agents WHERE name = ? AND workspace_id = ?')
-          .get(agentName, workspaceId)
-        const finalName = existing ? `${agentName}-${Date.now()}` : agentName
-        db.prepare(`
-          INSERT INTO agents (name, role, session_key, soul_content, status,
-            created_at, updated_at, config, workspace_id, runtime_type)
-          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-        `).run(
-          finalName,
-          'spawned',
-          sessionKey,
-          null,
-          'busy',
-          now, now,
-          JSON.stringify({ task, model: model ?? null, spawnId, toolsProfile: getPreferredToolsProfile() }),
-          workspaceId,
-          null,
-        )
-        result.agentName = finalName
-      } catch (dbErr: any) {
-        logger.warn({ err: dbErr }, 'Failed to register spawned agent in DB (non-fatal)')
-      }
-
-      const sessionInfo = sessionKey
+      const sessionInfo = result.sessionKey ?? result.session_key ?? spawnId
 
       const ipAddress = request.headers.get('x-forwarded-for') || request.headers.get('x-real-ip') || 'unknown'
       logAuditEvent({

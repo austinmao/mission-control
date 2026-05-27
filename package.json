@@ -9,7 +9,7 @@
     "mc": "node scripts/mc-cli.cjs",
     "mc:mcp": "node scripts/mc-mcp-server.cjs",
     "mc:tui": "node scripts/mc-tui.cjs",
-    "dev": "pnpm run verify:node && next dev --hostname 127.0.0.1 --port ${PORT:-3000}",
+    "dev": "pnpm run verify:node && next dev --hostname localhost --port ${PORT:-3000}",
     "build": "pnpm run verify:node && next build",
     "start": "pnpm run verify:node && next start --hostname 0.0.0.0 --port ${PORT:-3000}",
     "start:standalone": "pnpm run verify:node && bash scripts/start-standalone.sh",
@@ -28,8 +28,7 @@
     "postinstall": "node -e \"try{require('better-sqlite3')}catch(e){if(e.code==='ERR_DLOPEN_FAILED'||/NODE_MODULE_VERSION/.test(e.message)){console.error('\\n⚠  better-sqlite3 compiled for wrong Node version. Run: pnpm rebuild better-sqlite3\\n');process.exit(1)}}\""
   },
   "dependencies": {
-    "@clerk/nextjs": "^7.3.7",
-    "@radix-ui/react-slot": "^1.2.4",
+"@radix-ui/react-slot": "^1.2.4",
     "@scalar/api-reference-react": "^0.8.66",
     "@xterm/addon-fit": "^0.11.0",
     "@xterm/addon-web-links": "^0.12.0",
