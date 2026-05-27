@@ -298,7 +298,11 @@ export function runProxyLogic(request: NextRequest) {
   // when Clerk is off.
   const hasClerkAuth = Boolean((request.headers.get('x-clerk-user-id') || '').trim())
 
-  // API routes: accept session cookie OR API key OR Clerk headers
+  // Cloudflare Access injects this header after authenticating the operator.
+  // When CF Access is the auth gate, Clerk is disabled and this is the trusted signal.
+  const hasCfAccessAuth = Boolean((request.headers.get('cf-access-authenticated-user-email') || '').trim())
+
+  // API routes: accept session cookie OR API key OR Clerk headers OR CF Access
   if (pathname.startsWith('/api/')) {
     const configuredApiKey = (process.env.API_KEY || '').trim()
     const apiKey = extractApiKeyFromRequest(request)
@@ -308,7 +312,7 @@ export function runProxyLogic(request: NextRequest) {
     // allowed to pass through proxy auth gate.
     const looksLikeAgentApiKey = /^mca_[a-f0-9]{48}$/i.test(apiKey)
 
-    if (sessionToken || hasValidApiKey || looksLikeAgentApiKey || hasClerkAuth) {
+    if (sessionToken || hasValidApiKey || looksLikeAgentApiKey || hasClerkAuth || hasCfAccessAuth) {
       const { response, nonce } = nextResponseWithNonce(request)
       return addSecurityHeaders(response, request, nonce)
     }
@@ -316,8 +320,8 @@ export function runProxyLogic(request: NextRequest) {
     return addSecurityHeaders(NextResponse.json({ error: 'Unauthorized' }, { status: 401 }), request)
   }
 
-  // Page routes: redirect to login if no session AND no Clerk auth
-  if (sessionToken || hasClerkAuth) {
+  // Page routes: redirect to login if no session AND no Clerk auth AND no CF Access
+  if (sessionToken || hasClerkAuth || hasCfAccessAuth) {
     const { response, nonce } = nextResponseWithNonce(request)
     return addSecurityHeaders(response, request, nonce)
   }
