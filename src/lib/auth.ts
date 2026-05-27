@@ -468,6 +468,19 @@ export function getUserFromRequest(request: Request): User | null {
     }
   }
 
+  // Cloudflare Access auth (when Clerk is disabled — CF Access is the edge auth gate).
+  // Symmetric with proxy.ts hasCfAccessAuth: when CLERK_SECRET_KEY is unset, CF Access
+  // is the auth surface. CF Access injects cf-access-authenticated-user-email for every
+  // authenticated user passing through. Trust this header exactly as we trust the Clerk
+  // x-clerk-user-email header — auto-provision if MC_PROXY_AUTH_DEFAULT_ROLE is set.
+  if (!(process.env.CLERK_SECRET_KEY || '').trim()) {
+    const cfEmail = (request.headers.get('cf-access-authenticated-user-email') || '').trim()
+    if (cfEmail) {
+      const user = resolveOrProvisionProxyUser(cfEmail)
+      if (user) return { ...user, agent_name: agentName }
+    }
+  }
+
   // Proxy / trusted-header auth (MC_PROXY_AUTH_HEADER)
   // When the gateway has already authenticated the user and injects their username
   // as a trusted header (e.g. X-Auth-Username from Envoy OIDC claimToHeaders),
