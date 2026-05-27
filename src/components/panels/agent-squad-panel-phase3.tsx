@@ -22,7 +22,6 @@ import {
   CreateAgentModal
 } from './agent-detail-tabs'
 import { formatModelName, buildTaskStatParts } from '@/lib/agent-card-helpers'
-import { fetchWithClerkRetry } from '@/lib/auth/fetch-with-clerk-retry'
 import { useMissionControl, type Agent } from '@/store'
 
 const log = createClientLogger('AgentSquadPhase3')
@@ -114,8 +113,7 @@ export function AgentSquadPanelPhase3() {
     try {
       const url = source === 'local' ? '/api/agents/sync?source=local' : '/api/agents/sync'
       // Bug 11: retry through Clerk satellite handshake race before escalating to /login.
-      const response = await fetchWithClerkRetry(url, { method: 'POST', loginFallbackPath: '/login?next=%2Fagents' })
-      if (!response) return
+      const response = await fetch(url, { method: 'POST' })
       const data = await response.json()
       if (response.status === 403) {
         throw new Error('Admin access required for agent sync')
@@ -144,8 +142,7 @@ export function AgentSquadPanelPhase3() {
 
       const url = showHidden ? '/api/agents?show_hidden=true' : '/api/agents'
       // Bug 11: retry through Clerk satellite handshake race before escalating to /login.
-      const response = await fetchWithClerkRetry(url, { loginFallbackPath: '/login?next=%2Fagents' })
-      if (!response) return
+      const response = await fetch(url)
       if (response.status === 403) {
         throw new Error('Access denied')
       }

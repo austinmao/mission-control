@@ -5,7 +5,6 @@ import { useTranslations } from 'next-intl'
 import { Button } from '@/components/ui/button'
 import { LanguageSwitcherSelect } from '@/components/ui/language-switcher'
 import { useMissionControl } from '@/store'
-import { fetchWithClerkRetry } from '@/lib/auth/fetch-with-clerk-retry'
 import { useNavigateToPanel } from '@/lib/navigation'
 import { SecurityScanCard } from '@/components/onboarding/security-scan-card'
 import { AgentRuntimesSection } from '@/components/settings/agent-runtimes-section'
@@ -190,8 +189,7 @@ export function SettingsPanel() {
   const fetchSettings = useCallback(async () => {
     try {
       // Bug 11: retry through Clerk satellite handshake race before escalating to /login.
-      const res = await fetchWithClerkRetry('/api/settings', { loginFallbackPath: '/login?next=%2Fsettings' })
-      if (!res) return
+      const res = await fetch('/api/settings')
       if (res.status === 403) {
         setError('Admin access required')
         return

@@ -12,7 +12,6 @@ import { SessionMessage, shouldShowTimestamp, type SessionTranscriptMessage } fr
 import { getSessionKindLabel, SessionKindAvatar } from './session-kind-brand'
 import { TerminalView } from '@/components/terminal/terminal-view'
 import { SplitPaneLayout, type SplitPane } from '@/components/terminal/split-pane-layout'
-import { fetchWithClerkRetry } from '@/lib/auth/fetch-with-clerk-retry'
 
 const log = createClientLogger('ChatWorkspace')
 
@@ -101,11 +100,8 @@ export function ChatWorkspace({ mode = 'embedded', onClose }: ChatWorkspaceProps
     }
 
     try {
-      // Bug 11b (sess-12): wrap with fetchWithClerkRetry to ride out Clerk
-      // satellite handshake race on first-load after nav.
-      const res = await fetchWithClerkRetry(
+      const res = await fetch(
         `/api/chat/messages?conversation_id=${encodeURIComponent(activeConversation)}&limit=100`,
-        { loginFallbackPath: '/login?next=%2Fchat' },
       )
       if (!res || !res.ok) return
       const data = await res.json()
@@ -181,7 +177,7 @@ export function ChatWorkspace({ mode = 'embedded', onClose }: ChatWorkspaceProps
     try {
       // Bug 11b (sess-12): wrap with fetchWithClerkRetry — same Clerk satellite
       // handshake race as the gateway-session POST below.
-      const res = await fetchWithClerkRetry('/api/chat/messages', {
+      const res = await fetch('/api/chat/messages', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -193,7 +189,6 @@ export function ChatWorkspace({ mode = 'embedded', onClose }: ChatWorkspaceProps
           attachments,
           forward: true,
         }),
-        loginFallbackPath: '/login?next=%2Fchat',
       })
 
       if (!res) {
@@ -607,7 +602,7 @@ function SessionConversationView({
         // first send after fresh nav doesn't 401 due to Clerk satellite handshake
         // race (sess-10 helper now extended to this call site).
         const agentName = session.agent || session.sessionId.split(':')[1] || 'unknown'
-        const res = await fetchWithClerkRetry('/api/chat/messages', {
+        const res = await fetch('/api/chat/messages', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
@@ -619,12 +614,7 @@ function SessionConversationView({
             forward: true,
             sessionKey: session.sessionKey || undefined,
           }),
-          loginFallbackPath: '/login?next=%2Fchat',
         })
-        if (!res) {
-          // Helper already navigated to Clerk sign-in; bail without surfacing error.
-          return
-        }
         const data = await res.json().catch(() => ({}))
         if (!res.ok) {
           throw new Error(data?.error || 'Failed to send message')

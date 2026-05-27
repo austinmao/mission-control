@@ -96,6 +96,7 @@ fs.rmSync(runtimeRoot, { recursive: true, force: true })
 fs.mkdirSync(runtimeRoot, { recursive: true })
 fs.mkdirSync(dataDir, { recursive: true })
 fs.mkdirSync(openCodeDir, { recursive: true })
+fs.mkdirSync(path.join(runtimeRoot, '.claude', 'projects'), { recursive: true })
 fs.cpSync(fixtureSource, runtimeRoot, { recursive: true })
 
 const openCodeDb = new Database(openCodeDbPath)
