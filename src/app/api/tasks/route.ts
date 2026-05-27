@@ -7,7 +7,7 @@ import { logger } from '@/lib/logger';
 import { validateBody, createTaskSchema, bulkUpdateTaskStatusSchema } from '@/lib/validation';
 import { resolveMentionRecipients } from '@/lib/mentions';
 import { normalizeTaskCreateStatus } from '@/lib/task-status';
-import { reconcileDeferredTaskCompletions } from '@/lib/task-dispatch';
+import { reconcileDeferredTaskCompletions, dispatchAssignedTasks } from '@/lib/task-dispatch';
 import { pushTaskToGitHub, syncTaskOutbound } from '@/lib/github-sync-engine';
 import { pushTaskToGnap } from '@/lib/gnap-sync';
 import { config } from '@/lib/config';
@@ -310,6 +310,13 @@ export async function POST(request: NextRequest) {
       WHERE t.id = ? AND t.workspace_id = ?
     `).get(taskId, workspaceId) as Task;
     const parsedTask = mapTaskRow(createdTask);
+
+    // Fire-and-forget dispatch when task is immediately assigned
+    if (normalizedStatus === 'assigned' && assigned_to) {
+      dispatchAssignedTasks().catch(err =>
+        logger.warn({ err, taskId }, 'Auto-dispatch on task create failed')
+      )
+    }
 
     // Fire-and-forget outbound GitHub sync for new tasks
     if (parsedTask.project_id) {

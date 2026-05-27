@@ -273,8 +273,9 @@ function recoverDeferredCompletionTextFromTranscript(
 
   const dispatchSessionId = normalizeGatewayIdentifier(metadata.dispatch_session_id)
   const assignedAgent = normalizeGatewayIdentifier(task.assigned_to)
+  const dispatchAgentId = normalizeGatewayIdentifier(metadata.dispatch_agent_id)
   const agentCandidates = new Set<string>(
-    [dispatchSessionId, assignedAgent].filter((value): value is string => Boolean(value))
+    [dispatchSessionId, assignedAgent, dispatchAgentId].filter((value): value is string => Boolean(value))
   )
 
   if (agentCandidates.size === 0) return null
@@ -306,8 +307,8 @@ function recoverDeferredCompletionTextFromTranscript(
 async function waitForDeferredRun(runId: string): Promise<{ complete: boolean; text: string | null }> {
   const waitPayload = await callOpenClawGateway<any>(
     'agent.wait',
-    { runId, timeoutMs: 1000 },
-    3000,
+    { runId, timeoutMs: 25_000 },
+    30_000,
   )
   const status = String(waitPayload?.status || waitPayload?.result?.status || '').toLowerCase()
   if (!isCompletionStatus(status)) {
@@ -1365,6 +1366,7 @@ export async function dispatchAssignedTasks(): Promise<{ ok: boolean; message: s
         const pendingMeta: Record<string, any> = {
           ...taskMeta,
           dispatch_session_id: dispatchSessionId,
+          dispatch_agent_id: gatewayAgentId,
           ...(dispatchRunId ? { dispatch_run_id: dispatchRunId } : {
             async_reconciliation: 'manual_required',
             async_warning: 'agent dispatch accepted without a runId; automatic completion reconciliation cannot safely wait on this run.',

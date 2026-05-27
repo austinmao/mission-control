@@ -496,7 +496,7 @@ export async function POST(request: NextRequest) {
                   sessionKey,
                   message: content,
                   idempotencyKey,
-                  deliver: false,
+                  deliver: true,
                   attachments: toGatewayAttachments(body.attachments),
                 },
                 12000,

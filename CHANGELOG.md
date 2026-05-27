@@ -8,9 +8,14 @@ All notable changes to Mission Control are documented in this file.
 
 ### Fixed
 - `POST /api/spawn` no longer fails with HTTP 500 "unknown method: sessions_spawn". The route now implements spawn semantics using existing gateway primitives (`sessions.create` + `chat.send`) and registers the spawned agent directly in MC's local DB so `/api/agents` count increases immediately. Gateway call failures are non-fatal; the spawn succeeds regardless.
+- New `POST /api/chat/dispatch` route sends a message to an agent via the OpenClaw gateway and waits up to 90 s for a reply. Falls back to transcript recovery when `agent.wait` returns no text, so the `/chat` page always shows a non-empty response instead of the placeholder.
+- Task dispatch reconciliation now includes `dispatch_agent_id` in pending metadata so wait-polling can match the correct agent session without relying solely on session ID. Agent.wait timeouts raised to 25 s (inner) / 30 s (outer) to accommodate real agent think time on live gateway.
+- Gateway protocol version bumped to v4 to match current OpenClaw daemon.
 
 ### Tests
 - New unit test suite for `POST /api/spawn` covering: successful spawn, gateway failure fallback, DB insert failure fallback, label deduplication, and injection blocking.
+- New unit test suite for `POST /api/chat/dispatch` (17 tests): auth failure, missing params, 404 agent, 202 no-runId, 202 wait-timeout, 200 happy path with broadcast, transcript recovery fallback, placeholder fallback, all three `extractReplyText` parse paths, and three `recoverChatReplyFromTranscript` edge cases.
+- E2E suite (`task-dispatch-live.spec.ts`) validates full task dispatch and `/chat` page reply against a real OpenClaw gateway (skipped when gateway is absent).
 
 ---
 

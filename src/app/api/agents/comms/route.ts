@@ -36,20 +36,22 @@ export async function GET(request: NextRequest) {
     const humanPlaceholders = humanNames.map(() => "?").join(",")
 
     // 1. Get timeline messages (page latest rows but render chronologically)
-    let messagesWhere = `
-      FROM messages
-      WHERE workspace_id = ?
-        AND ${commsPredicate}
-    `
-    const messagesParams: any[] = [workspaceId]
+    // When a specific agent is queried, return ALL their messages regardless of
+    // conversation_id prefix — the caller filters by agent, not conv type.
+    let messagesWhere: string
+    const messagesParams: any[] = []
+
+    if (agent) {
+      messagesWhere = `FROM messages WHERE workspace_id = ? AND (from_agent = ? OR to_agent = ?)`
+      messagesParams.push(workspaceId, agent, agent)
+    } else {
+      messagesWhere = `FROM messages WHERE workspace_id = ? AND ${commsPredicate}`
+      messagesParams.push(workspaceId)
+    }
 
     if (since) {
       messagesWhere += " AND created_at > ?"
       messagesParams.push(parseInt(since, 10))
-    }
-    if (agent) {
-      messagesWhere += " AND (from_agent = ? OR to_agent = ?)"
-      messagesParams.push(agent, agent)
     }
 
     const messagesQuery = `
@@ -110,20 +112,19 @@ export async function GET(request: NextRequest) {
     const statsParams = [workspaceId, ...humanNames, ...humanNames, workspaceId, ...humanNames, ...humanNames]
     const agentStats = db.prepare(statsQuery).all(...statsParams)
 
-    // 4. Total count
-    let countQuery = `
-      SELECT COUNT(*) as total FROM messages
-      WHERE workspace_id = ?
-        AND ${commsPredicate}
-    `
-    const countParams: any[] = [workspaceId]
+    // 4. Total count (mirrors messagesWhere logic)
+    let countQuery: string
+    const countParams: any[] = []
+    if (agent) {
+      countQuery = `SELECT COUNT(*) as total FROM messages WHERE workspace_id = ? AND (from_agent = ? OR to_agent = ?)`
+      countParams.push(workspaceId, agent, agent)
+    } else {
+      countQuery = `SELECT COUNT(*) as total FROM messages WHERE workspace_id = ? AND ${commsPredicate}`
+      countParams.push(workspaceId)
+    }
     if (since) {
       countQuery += " AND created_at > ?"
       countParams.push(parseInt(since, 10))
-    }
-    if (agent) {
-      countQuery += " AND (from_agent = ? OR to_agent = ?)"
-      countParams.push(agent, agent)
     }
     const { total } = db.prepare(countQuery).get(...countParams) as { total: number }
 
@@ -163,6 +164,7 @@ export async function GET(request: NextRequest) {
       }
       return {
         ...msg,
+        from: msg.from_agent,
         metadata: parsedMetadata,
       }
     })
