@@ -502,37 +502,30 @@ export async function POST(request: NextRequest) {
                 12000,
               )
               const status = String(acceptedPayload?.status || '').toLowerCase()
-              forwardInfo.delivered = status === 'started' || status === 'ok' || status === 'in_flight'
+              forwardInfo.delivered = ['started', 'ok', 'in_flight', 'accepted'].includes(status)
               forwardInfo.session = sessionKey
               if (typeof acceptedPayload?.runId === 'string' && acceptedPayload.runId) {
                 forwardInfo.runId = acceptedPayload.runId
               }
             } else {
-              const invokeParams: any = {
-                message: `Message from ${from}: ${content}`,
-                idempotencyKey,
-                deliver: false,
-              }
-              invokeParams.agentId = openclawAgentId
-
-              const invokeResult = await runOpenClaw(
-                [
-                  'gateway',
-                  'call',
-                  'agent',
-                  '--timeout',
-                  '10000',
-                  '--params',
-                  JSON.stringify(invokeParams),
-                  '--json',
-                ],
-                { timeoutMs: 12000 }
+              // No session key — invoke agent directly via WebSocket gateway.
+              // The legacy `openclaw gateway call agent` CLI command no longer exists
+              // ("unknown gateway action: call"); use callOpenClawGateway instead.
+              const wsPayload = await callOpenClawGateway<any>(
+                'agent',
+                {
+                  agentId: openclawAgentId,
+                  message: `Message from ${from}: ${content}`,
+                  idempotencyKey,
+                  deliver: true,
+                },
+                10000,
               )
-              const acceptedPayload = parseGatewayJson(invokeResult.stdout)
-              forwardInfo.delivered = true
+              const wsStatus = String(wsPayload?.status || '').toLowerCase()
+              forwardInfo.delivered = ['started', 'ok', 'in_flight', 'accepted'].includes(wsStatus)
               forwardInfo.session = openclawAgentId || undefined
-              if (typeof acceptedPayload?.runId === 'string' && acceptedPayload.runId) {
-                forwardInfo.runId = acceptedPayload.runId
+              if (typeof wsPayload?.runId === 'string' && wsPayload.runId) {
+                forwardInfo.runId = wsPayload.runId
               }
             }
           } catch (err) {
