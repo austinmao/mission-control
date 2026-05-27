@@ -1348,58 +1348,79 @@ export async function dispatchAssignedTasks(): Promise<{ ok: boolean; message: s
           'agent',
           invokeParams,
           AGENT_DISPATCH_ACCEPT_TIMEOUT_MS,
+          { expectFinal: true },
         )
         const status = String(acceptedPayload?.status || '').toLowerCase()
-        if (status && !['started', 'ok', 'in_flight', 'accepted'].includes(status)) {
+        if (status && !['started', 'ok', 'in_flight', 'accepted', 'completed'].includes(status)) {
           throw new Error(`agent dispatch returned status: ${status}`)
         }
 
-        const dispatchRunId = typeof acceptedPayload?.runId === 'string' && acceptedPayload.runId.trim()
-          ? acceptedPayload.runId.trim()
-          : null
-        const dispatchSessionId = typeof acceptedPayload?.sessionId === 'string' && acceptedPayload.sessionId.trim()
-          ? acceptedPayload.sessionId.trim()
-          : typeof acceptedPayload?.session_id === 'string' && acceptedPayload.session_id.trim()
-            ? acceptedPayload.session_id.trim()
-            : gatewayAgentId
-        const asyncState = dispatchRunId ? 'pending' : 'accepted_without_run_id'
-        const pendingMeta: Record<string, any> = {
-          ...taskMeta,
-          dispatch_session_id: dispatchSessionId,
-          dispatch_agent_id: gatewayAgentId,
-          ...(dispatchRunId ? { dispatch_run_id: dispatchRunId } : {
-            async_reconciliation: 'manual_required',
-            async_warning: 'agent dispatch accepted without a runId; automatic completion reconciliation cannot safely wait on this run.',
-          }),
-          async_state: asyncState,
-          async_dispatched_at: Math.floor(Date.now() / 1000),
+        // If the gateway returned the full agent response synchronously (expectFinal),
+        // extract the text and fall through to the sync resolution path below.
+        // Guard: status 'accepted'/'in_flight'/'started' means the gateway only sent
+        // the interim ack, not the final agent response — fall through to deferred.
+        const isFinalGatewayResponse = !['accepted', 'in_flight', 'started'].includes(status)
+        const syncParsed = isFinalGatewayResponse
+          ? parseAgentResponse(
+              acceptedPayload?.result ? JSON.stringify(acceptedPayload.result) : JSON.stringify(acceptedPayload)
+            )
+          : { text: null, sessionId: null }
+        if (isFinalGatewayResponse && syncParsed.text) {
+          agentResponse = {
+            text: syncParsed.text,
+            sessionId: syncParsed.sessionId
+              ?? (typeof acceptedPayload?.sessionId === 'string' && acceptedPayload.sessionId.trim() ? acceptedPayload.sessionId.trim() : null)
+              ?? (typeof acceptedPayload?.session_id === 'string' && acceptedPayload.session_id.trim() ? acceptedPayload.session_id.trim() : null),
+          }
+        } else {
+          // Gateway returned accept ack only — fall back to deferred reconciliation.
+          const dispatchRunId = typeof acceptedPayload?.runId === 'string' && acceptedPayload.runId.trim()
+            ? acceptedPayload.runId.trim()
+            : null
+          const dispatchSessionId = typeof acceptedPayload?.sessionId === 'string' && acceptedPayload.sessionId.trim()
+            ? acceptedPayload.sessionId.trim()
+            : typeof acceptedPayload?.session_id === 'string' && acceptedPayload.session_id.trim()
+              ? acceptedPayload.session_id.trim()
+              : gatewayAgentId
+          const asyncState = dispatchRunId ? 'pending' : 'accepted_without_run_id'
+          const pendingMeta: Record<string, any> = {
+            ...taskMeta,
+            dispatch_session_id: dispatchSessionId,
+            dispatch_agent_id: gatewayAgentId,
+            ...(dispatchRunId ? { dispatch_run_id: dispatchRunId } : {
+              async_reconciliation: 'manual_required',
+              async_warning: 'agent dispatch accepted without a runId; automatic completion reconciliation cannot safely wait on this run.',
+            }),
+            async_state: asyncState,
+            async_dispatched_at: Math.floor(Date.now() / 1000),
+          }
+          db.prepare('UPDATE tasks SET metadata = ?, updated_at = ? WHERE id = ?')
+            .run(JSON.stringify(pendingMeta), Math.floor(Date.now() / 1000), task.id)
+
+          eventBus.broadcast('task.updated', {
+            id: task.id,
+            status: 'in_progress',
+            assigned_to: task.assigned_to,
+            dispatch_session_id: dispatchSessionId,
+            dispatch_run_id: pendingMeta.dispatch_run_id,
+            async_state: asyncState,
+          })
+
+          db_helpers.logActivity(
+            dispatchRunId ? 'task_deferred_dispatch' : 'task_deferred_dispatch_unreconcilable',
+            'task',
+            task.id,
+            'scheduler',
+            dispatchRunId
+              ? `Deferred task "${task.title}" to agent ${task.agent_name}`
+              : `Accepted task "${task.title}" for agent ${task.agent_name} without a runId; manual reconciliation required`,
+            { dispatch_session_id: dispatchSessionId, dispatch_run_id: pendingMeta.dispatch_run_id, async_state: asyncState },
+            task.workspace_id
+          )
+
+          results.push({ id: task.id, success: true })
+          continue
         }
-        db.prepare('UPDATE tasks SET metadata = ?, updated_at = ? WHERE id = ?')
-          .run(JSON.stringify(pendingMeta), Math.floor(Date.now() / 1000), task.id)
-
-        eventBus.broadcast('task.updated', {
-          id: task.id,
-          status: 'in_progress',
-          assigned_to: task.assigned_to,
-          dispatch_session_id: dispatchSessionId,
-          dispatch_run_id: pendingMeta.dispatch_run_id,
-          async_state: asyncState,
-        })
-
-        db_helpers.logActivity(
-          dispatchRunId ? 'task_deferred_dispatch' : 'task_deferred_dispatch_unreconcilable',
-          'task',
-          task.id,
-          'scheduler',
-          dispatchRunId
-            ? `Deferred task "${task.title}" to agent ${task.agent_name}`
-            : `Accepted task "${task.title}" for agent ${task.agent_name} without a runId; manual reconciliation required`,
-          { dispatch_session_id: dispatchSessionId, dispatch_run_id: pendingMeta.dispatch_run_id, async_state: asyncState },
-          task.workspace_id
-        )
-
-        results.push({ id: task.id, success: true })
-        continue
       } // end else (new session dispatch)
 
       if (!agentResponse.text) {
