@@ -1,11 +1,13 @@
 /**
- * Lane T3 — Phase 3 D6 Clerk cutover proof.
+ * Lane T3 — CF Access auth gate proof.
  *
  * Verifies all 3 `mc-{tenant}.holalumina.com` redirect unauthenticated
- * requests to `accounts.holalumina.com/sign-in?...`. This proves the
- * Clerk middleware shipped in Session 4 (`lumina-phase-3-canary-*`
- * digest `sha256:52b2a9a18087`) is the auth surface and CF Access has
- * been fully cut over per D6 ("clean cutover per tenant").
+ * requests to Cloudflare Access login (*.cloudflareaccess.com). This
+ * proves CF Access is the auth surface after the Clerk-removal migration
+ * (CLERK_SECRET_KEY removed from all mc-* envs, 2026-05-27).
+ *
+ * Previously this test verified Clerk redirects to accounts.holalumina.com.
+ * CF Access handles auth at the edge before requests reach the container.
  *
  * Cost: $0 (no auth, no LLM, just HTTP probe).
  */
@@ -13,31 +15,28 @@ import { expect, test } from '@playwright/test'
 
 import { TENANT_SUBDOMAINS } from './helpers/clerk-prod-auth'
 
-test.describe('Phase 3 D6 — Clerk sign-in cutover (all 3 MCs)', () => {
+test.describe('CF Access auth gate (all 3 MCs)', () => {
   for (const [slug, host] of Object.entries(TENANT_SUBDOMAINS)) {
-    test(`mc-${slug} (${host}) redirects unauth to accounts.holalumina.com`, async ({ request }) => {
+    test(`mc-${slug} (${host}) redirects unauth to cloudflareaccess.com`, async ({ request }) => {
       const res = await request.get(`https://${host}/`, { maxRedirects: 0 })
-      // Clerk middleware emits 307 (preferred) or 302 to the hosted sign-in URL
+      // CF Access emits 302 to its own login endpoint before the request reaches MC
       expect([302, 307]).toContain(res.status())
       const loc = res.headers()['location']
       expect(loc).toBeTruthy()
-      expect(loc).toMatch(/^https:\/\/app\.holalumina\.com\/admin\/login/)
-      // Clerk middleware diagnostic header confirms middleware (not Caddy/fallback)
-      const reason = res.headers()['x-clerk-auth-reason']
-      expect(reason).toBe('session-token-and-uat-missing')
+      expect(loc).toMatch(/cloudflareaccess\.com/)
     })
   }
 
-  test('all 3 MCs redirect to IDENTICAL accounts.holalumina.com/sign-in URL', async ({ request }) => {
+  test('all 3 MCs redirect to cloudflareaccess.com (CF Access gate active)', async ({ request }) => {
     const locs = await Promise.all(
       Object.values(TENANT_SUBDOMAINS).map(async (host) => {
         const res = await request.get(`https://${host}/`, { maxRedirects: 0 })
-        // strip the redirect_url query (varies per host) to compare base path only
         const loc = res.headers()['location'] || ''
-        return loc.split('?')[0]
+        return loc
       }),
     )
-    const unique = Array.from(new Set(locs))
-    expect(unique).toEqual(['https://app.holalumina.com/admin/login'])
+    for (const loc of locs) {
+      expect(loc).toMatch(/cloudflareaccess\.com/)
+    }
   })
 })
