@@ -4,7 +4,7 @@ import { config } from './config'
 import { buildGatewayWebSocketUrl } from './gateway-url'
 import { getDetectedGatewayToken } from './gateway-runtime'
 
-const GATEWAY_PROTOCOL_VERSION = 4
+const GATEWAY_PROTOCOL_VERSION = 3
 const GATEWAY_CLIENT_ID = process.env.GATEWAY_CLIENT_ID || 'gateway-client'
 const GATEWAY_SCOPES = ['operator.admin', 'operator.write', 'operator.read']
 
