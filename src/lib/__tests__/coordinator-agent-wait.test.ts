@@ -115,7 +115,7 @@ describe('coordinator wait-poll — uses callOpenClawGateway not runOpenClaw', (
     const res = await POST(req)
     expect(res.status).toBeLessThan(500)
 
-    const waitCall = callOpenClawGatewayMock.mock.calls.find(([method]: [string]) => method === 'agent.wait')
+    const waitCall = callOpenClawGatewayMock.mock.calls.find((args) => args[0] === 'agent.wait')
     expect(waitCall).toBeDefined()
     expect(waitCall![1]).toMatchObject({ runId: 'run-test-abc', timeoutMs: 6000 })
   })
