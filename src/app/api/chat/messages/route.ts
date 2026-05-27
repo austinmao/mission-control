@@ -1,6 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { getDatabase, db_helpers, Message } from '@/lib/db'
-import { runOpenClaw } from '@/lib/command'
 import { getAllGatewaySessions } from '@/lib/sessions'
 import { eventBus } from '@/lib/event-bus'
 import { requireRole } from '@/lib/auth'
@@ -587,21 +586,11 @@ export async function POST(request: NextRequest) {
             // Best effort: wait briefly and surface completion/error feedback.
             if (forwardInfo.runId) {
               try {
-                const waitResult = await runOpenClaw(
-                  [
-                    'gateway',
-                    'call',
-                    'agent.wait',
-                    '--timeout',
-                    '8000',
-                    '--params',
-                    JSON.stringify({ runId: forwardInfo.runId, timeoutMs: 6000 }),
-                    '--json',
-                  ],
-                  { timeoutMs: 9000 }
+                const waitPayload = await callOpenClawGateway<any>(
+                  'agent.wait',
+                  { runId: forwardInfo.runId, timeoutMs: 6000 },
+                  9000,
                 )
-
-                const waitPayload = parseGatewayJson(waitResult.stdout)
                 const waitStatus = String(waitPayload?.status || '').toLowerCase()
                 const toolEvents = extractToolEvents(waitPayload)
 
