@@ -584,8 +584,8 @@ export async function POST(request: NextRequest) {
               try {
                 const waitPayload = await callOpenClawGateway<any>(
                   'agent.wait',
-                  { runId: forwardInfo.runId, timeoutMs: 6000 },
-                  9000,
+                  { runId: forwardInfo.runId, timeoutMs: 25000 },
+                  30000,
                 )
                 const waitStatus = String(waitPayload?.status || '').toLowerCase()
                 const toolEvents = extractToolEvents(waitPayload)
