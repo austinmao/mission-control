@@ -669,24 +669,42 @@ export async function POST(request: NextRequest) {
                   }
                 }
               } catch (waitErr) {
-                const maybeWaitStdout = String((waitErr as any)?.stdout || '')
-                const maybeWaitStderr = String((waitErr as any)?.stderr || '')
-                const waitPayload = parseGatewayJson(maybeWaitStdout)
-                const reason =
-                  typeof waitPayload?.error === 'string'
-                    ? waitPayload.error
-                    : (maybeWaitStderr || maybeWaitStdout || 'Unable to read completion status from coordinator runtime.').trim()
+                const errMessage = String((waitErr as any)?.message || '')
+                const isTimeout =
+                  errMessage.toLowerCase().includes('timed out') ||
+                  errMessage.toLowerCase().includes('timeout')
 
-                createChatReply(
-                  db,
-                  workspaceId,
-                  conversation_id,
-                  COORDINATOR_AGENT,
-                  from,
-                  `I received your message, but I could not retrieve completion output yet: ${reason}`,
-                  'status',
-                  { status: 'unknown', runId: forwardInfo.runId }
-                )
+                if (isTimeout) {
+                  createChatReply(
+                    db,
+                    workspaceId,
+                    conversation_id,
+                    COORDINATOR_AGENT,
+                    from,
+                    'I received your message and I am still processing it. I will post results as soon as execution completes.',
+                    'status',
+                    { status: 'processing', runId: forwardInfo.runId }
+                  )
+                } else {
+                  const maybeWaitStdout = String((waitErr as any)?.stdout || '')
+                  const maybeWaitStderr = String((waitErr as any)?.stderr || '')
+                  const waitPayload = parseGatewayJson(maybeWaitStdout)
+                  const reason =
+                    typeof waitPayload?.error === 'string'
+                      ? waitPayload.error
+                      : (maybeWaitStderr || maybeWaitStdout || errMessage || 'Unable to read completion status from coordinator runtime.').trim()
+
+                  createChatReply(
+                    db,
+                    workspaceId,
+                    conversation_id,
+                    COORDINATOR_AGENT,
+                    from,
+                    `I received your message, but I could not retrieve completion output yet: ${reason}`,
+                    'status',
+                    { status: 'unknown', runId: forwardInfo.runId }
+                  )
+                }
               }
             }
           }
