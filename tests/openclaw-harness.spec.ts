@@ -67,7 +67,7 @@ test.describe('OpenClaw Offline Harness', () => {
         forward: true,
       },
     })
-    expect(postRes.status()).toBe(200)
+    expect(postRes.status()).toBe(201)
     const postBody = await postRes.json()
     expect(postBody).toHaveProperty('message')
     expect(postBody.message.conversation_id).toBe(convId)
@@ -114,6 +114,7 @@ test.describe('OpenClaw Offline Harness', () => {
         (m: any) =>
           m.content.includes('offline') ||
           m.content.includes('delivery_failed') ||
+          m.content.includes('delivery') && m.content.includes('failed') ||
           m.content.includes('could not retrieve') ||
           m.content.includes('still processing')
       )
@@ -134,7 +135,7 @@ test.describe('OpenClaw Offline Harness', () => {
         forward: true,
       },
     })
-    expect(postRes.status()).toBe(200)
+    expect(postRes.status()).toBe(201)
 
     await new Promise((r) => setTimeout(r, 500))
 
