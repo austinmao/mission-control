@@ -120,4 +120,39 @@ test.describe('OpenClaw Offline Harness', () => {
       expect(offlineOrFailed).toBe(true)
     }
   })
+
+  test('coordinator chat ping-pong: agent_ conversation_id (main chat workspace path) also gets reply', async ({ request }) => {
+    const convId = `agent_coordinator`
+
+    const postRes = await request.post('/api/chat/messages', {
+      headers: API_KEY_HEADER,
+      data: {
+        to: 'coordinator',
+        content: 'ping from main chat workspace path',
+        message_type: 'text',
+        conversation_id: convId,
+        forward: true,
+      },
+    })
+    expect(postRes.status()).toBe(200)
+
+    await new Promise((r) => setTimeout(r, 500))
+
+    const getRes = await request.get(
+      `/api/chat/messages?conversation_id=${encodeURIComponent(convId)}&limit=20`,
+      { headers: API_KEY_HEADER }
+    )
+    expect(getRes.status()).toBe(200)
+    const getBody = await getRes.json()
+    const messages: any[] = getBody.messages ?? getBody.parsed ?? []
+
+    const coordinatorReplies = messages.filter(
+      (m: any) => m.from_agent === 'coordinator' && m.message_type === 'status'
+    )
+    expect(coordinatorReplies.length).toBeGreaterThan(0)
+
+    for (const reply of coordinatorReplies) {
+      expect(reply.content).not.toContain('Unable to read completion status from coordinator runtime.')
+    }
+  })
 })

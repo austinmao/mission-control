@@ -468,7 +468,7 @@ export async function POST(request: NextRequest) {
           forwardInfo.reason = 'no_active_session'
 
           // For coordinator messages, emit an immediate visible status reply
-          if (typeof conversation_id === 'string' && conversation_id.startsWith('coord:')) {
+          if (isCoordinatorSend) {
             try {
                 createChatReply(
                   db,
@@ -543,7 +543,7 @@ export async function POST(request: NextRequest) {
               logger.error({ err }, 'Failed to forward message via gateway')
 
               // For coordinator messages, emit visible status when send fails
-              if (typeof conversation_id === 'string' && conversation_id.startsWith('coord:')) {
+              if (isCoordinatorSend) {
                 try {
                   createChatReply(
                     db,
@@ -563,11 +563,7 @@ export async function POST(request: NextRequest) {
           }
 
           // Coordinator mode should always show visible coordinator feedback in thread.
-          if (
-            typeof conversation_id === 'string' &&
-            conversation_id.startsWith('coord:') &&
-            forwardInfo.delivered
-          ) {
+          if (isCoordinatorSend && forwardInfo.delivered) {
             try {
               createChatReply(
                 db,
