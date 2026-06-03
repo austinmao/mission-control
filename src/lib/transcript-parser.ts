@@ -132,14 +132,22 @@ export function parseGatewayHistoryTranscript(messages: unknown[], limit: number
  * lookups like `findAssistantTextAfterTaskPrompt`. Without this, MC misses dispatch
  * responses for any task that ran before the latest rotation.
  */
-export function readSessionJsonl(stateDir: string, agentName: string, sessionId: string): string | null {
+export function readSessionJsonl(stateDir: string, agentName: string, sessionId: string, sessionFile?: string): string | null {
   const sessionsDir = path.join(stateDir, 'agents', agentName, 'sessions')
-  const livePath = path.join(sessionsDir, `${sessionId}.jsonl`)
+  // After rollover/compaction OpenClaw reassigns sessionId but keeps the original
+  // transcript filename, recording the real path in the session store's `sessionFile`.
+  // Prefer that basename so recovery follows the actual transcript instead of looking up
+  // a `<newSessionId>.jsonl` that never exists. Use only the basename: `sessionFile` is
+  // the gateway's absolute path, whose mount root can differ from MC's `stateDir`.
+  const baseId = sessionFile && sessionFile.trim()
+    ? path.basename(sessionFile.trim()).replace(/\.jsonl$/, '')
+    : sessionId
+  const livePath = path.join(sessionsDir, `${baseId}.jsonl`)
   const liveExists = existsSync(livePath)
 
   const bakPaths: string[] = []
   try {
-    const bakPrefix = `${sessionId}.jsonl.bak-`
+    const bakPrefix = `${baseId}.jsonl.bak-`
     for (const name of readdirSync(sessionsDir)) {
       if (name.startsWith(bakPrefix)) bakPaths.push(path.join(sessionsDir, name))
     }

@@ -44,7 +44,7 @@ function recoverChatReplyFromTranscript(openclawAgentId: string, sentMessage: st
   const needle = sentMessage.trim().toLowerCase().slice(0, 60)
   for (const session of sessions) {
     if (!session.agent || !session.sessionId) continue
-    const raw = readSessionJsonl(config.openclawStateDir, session.agent, session.sessionId)
+    const raw = readSessionJsonl(config.openclawStateDir, session.agent, session.sessionId, session.sessionFile)
     if (!raw) continue
     const messages = parseJsonlTranscript(raw, 500)
     for (let i = messages.length - 1; i >= 0; i--) {

@@ -295,7 +295,7 @@ function recoverDeferredCompletionTextFromTranscript(
 
   for (const session of sessions) {
     if (!session.agent || !session.sessionId) continue
-    const rawTranscript = readSessionJsonl(config.openclawStateDir, session.agent, session.sessionId)
+    const rawTranscript = readSessionJsonl(config.openclawStateDir, session.agent, session.sessionId, session.sessionFile)
     if (!rawTranscript) continue
     const text = findAssistantTextAfterTaskPrompt(rawTranscript, task)
     if (text) return text
