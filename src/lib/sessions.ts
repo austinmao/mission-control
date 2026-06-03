@@ -8,6 +8,12 @@ export interface GatewaySession {
   /** Agent directory name, e.g. "<agent>" */
   agent: string
   sessionId: string
+  /**
+   * Absolute transcript path from the session store. After rollover/compaction
+   * OpenClaw keeps the original `<id>.jsonl` filename but reassigns sessionId, so
+   * the basename here can differ from sessionId. Prefer this for reading the transcript.
+   */
+  sessionFile?: string
   updatedAt: number
   chatType: string
   channel: string
@@ -86,6 +92,7 @@ export function getAllGatewaySessions(activeWithinMs = 60 * 60 * 1000, force = f
             key,
             agent: agentName,
             sessionId: s.sessionId || '',
+            sessionFile: typeof s.sessionFile === 'string' ? s.sessionFile : undefined,
             updatedAt,
             chatType: s.chatType || 'unknown',
             channel: s.deliveryContext?.channel || s.lastChannel || s.channel || '',

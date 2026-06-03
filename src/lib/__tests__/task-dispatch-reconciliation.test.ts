@@ -356,7 +356,7 @@ describe('deferred task completion reconciliation', () => {
 
     expect(result.promoted).toBe(1)
     expect(mockDbState.getAllGatewaySessions).toHaveBeenCalledWith(24 * 60 * 60 * 1000, true)
-    expect(mockDbState.readSessionJsonl).toHaveBeenCalledWith('C:/openclaw', 'arnold', 'session-30')
+    expect(mockDbState.readSessionJsonl).toHaveBeenCalledWith('C:/openclaw', 'arnold', 'session-30', undefined)
     expect(mockDbState.updates[0].resolution).toBe('Recovered transcript response.')
     expect(mockDbState.comments[0]).toMatchObject({
       taskId: 30,

@@ -40,7 +40,7 @@ export async function GET(request: NextRequest) {
   for (const session of sessions) {
     if (!session.sessionId) continue
 
-    const raw = readSessionJsonl(stateDir, session.agent, session.sessionId)
+    const raw = readSessionJsonl(stateDir, session.agent, session.sessionId, session.sessionFile)
     if (!raw) continue
 
     const messages = parseJsonlTranscript(raw, 500)
